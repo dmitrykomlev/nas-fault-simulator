@@ -1,4 +1,4 @@
-# NAS Emulator Project - Context Document
+# NAS Emulator Project - LLM Context Document
 
 > **Note**: This is a private context document to maintain knowledge continuity in AI assistant conversations about this project. Not intended for public documentation.
 
@@ -86,87 +86,96 @@ The NAS Emulator will simulate a real NAS device with configurable fault injecti
    - Authentication failures
    - Share permission changes
 
-## Implementation Strategy
+## Project Structure and Files
 
-### Phase 1: Core Functionality
-- Basic FUSE implementation with passthrough operations
-- Simple SMB server configuration
-- Docker container setup
-- Basic configuration API
+The project is organized with the following structure:
 
-### Phase 2: Fault Injection
-- Implement core fault injection mechanisms
-- Add silent corruption capabilities
-- Implement network disruption simulation
+```
+/nas-fault-simulator/
+├── docker-compose.yml            # Main Docker Compose file for all services
+├── .gitignore                    # Git ignore file
+├── README.md                     # Public documentation
+├── README-LLM.md                 # This context document
+├── /src
+│   ├── /fuse-driver              # FUSE filesystem implementation
+│   │   ├── /src
+│   │   │   └── fs_fault_injector.c  # Main FUSE driver implementation
+│   │   ├── /include              # Header files (to be added)
+│   │   ├── /tests                # Unit tests (to be added)
+│   │   ├── /docker
+│   │   │   └── Dockerfile.dev    # Development environment for FUSE driver
+│   │   └── Makefile              # Build configuration for FUSE driver
+│   ├── /backend                  # Future Go backend service
+│   └── /dashboard                # Future web dashboard
+└── /scripts
+    ├── build-fuse.sh             # Script to build the FUSE driver
+    └── run-fuse.sh               # Script to run the FUSE driver
+```
 
-### Phase 3: Dashboard & Monitoring
-- Basic web UI for configuration
-- Metrics collection and display
-- Operation logging
+## Key Files Description
 
-### Phase 4: Advanced Features
-- Complex failure scenarios
-- Scheduled/sequenced fault injection
-- Performance optimization for large transfers
+### FUSE Driver
 
-## Technology Stack
+- **src/fuse-driver/src/fs_fault_injector.c**: Main FUSE driver file that intercepts filesystem operations. Currently implements basic functionality including `getattr` and `readdir` operations. Uses `/tmp/fs_fault_storage` as the backing storage location.
 
-- **FUSE**: ANSI C implementation with makefiles for filesystem interception
-- **Docker**: For packaging, distribution, and development environments
-- **Samba/SMB**: For network share protocol
-- **Golang**: For backend service implementation
-- **React with TypeScript**: For web dashboard, using Material-UI or Chakra UI components
-- **Prometheus/Grafana**: For metrics collection and visualization
-- **Redis/SQLite**: For state management
+- **src/fuse-driver/Makefile**: Build configuration for the FUSE driver.
 
-## Development Notes
+### Docker Configuration
 
-### FUSE Implementation Considerations
-- ANSI C implementation with makefiles
-- Need to handle large file operations efficiently
-- Must accurately simulate real NAS behavior under normal conditions
-- Should support custom error injection on specific operations
+- **src/fuse-driver/docker/Dockerfile.dev**: Development environment for the FUSE driver, based on Ubuntu 22.04 with all necessary dependencies.
 
-### Development Workflow
-- Component-focused development with separate Docker environments for each component
-- Multi-stage Docker builds for production images
-- Separate development Dockerfiles for FUSE driver, backend service, and web UI
-- Volume mounting for rapid iteration during development
-- Automated testing for individual components and integrated system
+- **docker-compose.yml**: Main Docker Compose file at the root level that defines services. Currently only includes the FUSE driver container, but will be expanded for other services.
 
-### Docker Deployment
-- Volume mapping for large storage requirements
-- Network configuration for SMB exposure
-- Resource limits for realistic performance
-- Multi-stage builds to minimize final image size
+### Scripts
 
-### Testing Strategy
-- Component-level unit tests
-- Integration with actual backup software
-- Validation of fault injection behavior
-- Performance testing with large datasets
-- Automated CI/CD pipeline
+- **scripts/build-fuse.sh**: Script that builds the FUSE driver inside the Docker container.
 
-## Project Status Tracking
+- **scripts/run-fuse.sh**: Script that runs the FUSE driver inside the Docker container, mounting it at `/mnt/fs-fault`.
 
-This section will be updated as development progresses:
+## Development Workflow
 
-- [ ] Project initialization
-- [ ] Core FUSE implementation
-- [ ] Basic SMB configuration
-- [ ] Docker container setup
-- [ ] Configuration API
-- [ ] Basic fault injection
-- [ ] Web dashboard skeleton
-- [ ] Metrics collection
-- [ ] Advanced fault scenarios
-- [ ] Performance optimization
-- [ ] Documentation and distribution
+The project uses Docker containers for consistent development environments:
 
-## Open Questions/Decisions
+1. **Local Development**: Edit code on host machine using any editor
+2. **Build Process**: Use `./scripts/build-fuse.sh` to build inside Docker
+3. **Running**: Use `./scripts/run-fuse.sh` to run the FUSE driver
+4. **Testing**: Run unit tests and functional tests inside containers (to be implemented)
 
-1. Storage backend strategy for large datasets
-2. Authentication mechanism for the dashboard
-3. Level of SMB protocol compliance required
-4. Performance targets under load
-5. Additional fault scenarios to implement
+## How FUSE Works in This Project
+
+The FUSE driver creates a virtual filesystem that intercepts operations and can selectively inject faults:
+
+1. **Mount Point**: When run, the FUSE driver mounts at `/mnt/fs-fault` in the container.
+
+2. **Storage Backend**: The actual data is stored at `/tmp/fs_fault_storage`.
+
+3. **Operation Interception**: All filesystem operations to the mount point are intercepted and processed by our implementation.
+
+4. **Passthrough Behavior**: Currently, operations are passed through to the real filesystem at the storage backend.
+
+5. **Unimplemented Operations**: If an operation is not implemented in our FUSE driver, FUSE will return a `-ENOSYS` error (Function not implemented) to the calling application.
+
+## Current Implementation Status
+
+- [x] Project structure setup
+- [x] Basic FUSE driver skeleton with minimal implementation
+- [x] Docker development environment
+- [x] Build and run scripts
+- [ ] Complete passthrough filesystem functionality
+- [ ] Fault injection framework
+- [ ] SMB server integration
+- [ ] Backend service
+- [ ] Web dashboard
+
+## Next Steps
+
+1. Implement remaining passthrough filesystem operations:
+   - `open`, `read`, `write`, `release` (close)
+   - `mkdir`, `rmdir`
+   - `create`, `unlink` (delete), `rename`
+   - `chmod`, `chown`, `truncate`
+
+2. Add configuration mechanism for fault injection
+3. Implement fault injection logic within filesystem operations
+4. Add logging to track operations and injected faults
+5. Create initial unit tests for filesystem operations

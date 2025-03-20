@@ -1,0 +1,28 @@
+version: '3'
+
+services:
+  fuse-dev:
+    build:
+      context: .
+      dockerfile: src/fuse-driver/docker/Dockerfile.dev
+    privileged: true  # Needed for FUSE
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - .:/app
+      - fuse-data:/mnt/fs-fault
+    command: tail -f /dev/null  # Keep container running
+
+  # Future services will be added here:
+  # backend:
+  #   build: ...
+  #
+  # dashboard:
+  #   build: ...
+
+volumes:
+  fuse-data:
