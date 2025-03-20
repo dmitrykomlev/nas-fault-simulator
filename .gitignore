@@ -1,0 +1,25 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.lo
+*.la
+
+# FUSE driver binary
+src/fuse-driver/nas-emu-fuse
+
+# Editor files
+*~
+.*.swp
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
