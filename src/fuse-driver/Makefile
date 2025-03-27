@@ -1,30 +1,41 @@
 CC = gcc
-CFLAGS = -Wall -g -D_FILE_OFFSET_BITS=64
-LDFLAGS = -lfuse
+CFLAGS = -Wall -Wextra -g -D_FILE_OFFSET_BITS=64
+LDFLAGS = -lfuse -lpthread
 
-SRC_DIR = src
-BUILD_DIR = build
 TARGET = nas-emu-fuse
+SRCDIR = src
+OBJDIR = obj
 
-SOURCES = $(wildcard $(SRC_DIR)/*.c)
-OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SOURCES))
+SOURCES = $(SRCDIR)/fs_fault_injector.c \
+          $(SRCDIR)/fs_operations.c \
+          $(SRCDIR)/fault_injector.c \
+          $(SRCDIR)/log.c
 
-.PHONY: all clean test
+OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
 
-all: $(BUILD_DIR) $(TARGET)
+.PHONY: all clean
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+all: directories $(TARGET)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+directories:
+	@mkdir -p $(OBJDIR)
 
 $(TARGET): $(OBJECTS)
-	$(CC) $^ -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf $(OBJDIR) $(TARGET)
+
+# Testing targets
+.PHONY: test test-docker
 
 test:
-	@echo "Running unit tests..."
-	@echo "No tests defined yet"
+	@echo "Running functional tests..."
+	@cd tests/functional && ./run_all_tests.sh
+
+test-docker:
+	@echo "Running tests in Docker container..."
+	@../scripts/run_tests.sh

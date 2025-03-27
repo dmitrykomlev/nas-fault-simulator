@@ -96,41 +96,73 @@ The project is organized with the following structure:
 ├── .gitignore                    # Git ignore file
 ├── README.md                     # Public documentation
 ├── README-LLM.md                 # This context document
+├── README-LLM-FUSE.md            # Detailed FUSE driver documentation
 ├── /src
 │   ├── /fuse-driver              # FUSE filesystem implementation
-│   │   ├── /src
-│   │   │   └── fs_fault_injector.c  # Main FUSE driver implementation
-│   │   ├── /include              # Header files (to be added)
-│   │   ├── /tests                # Unit tests (to be added)
-│   │   ├── /docker
+│   │   ├── /src                  # Source code for FUSE driver
+│   │   │   ├── fs_fault_injector.c  # Main FUSE driver with fault wrappers
+│   │   │   ├── fs_operations.c   # Normal filesystem operations
+│   │   │   ├── fs_operations.h   # Headers for filesystem operations
+│   │   │   ├── fault_injector.c  # Fault injection logic
+│   │   │   ├── fault_injector.h  # Headers for fault injection
+│   │   │   ├── log.c             # Logging system implementation
+│   │   │   └── log.h             # Logging system interface
+│   │   ├── /tests                # Tests for the FUSE driver
+│   │   │   ├── /functional       # Functional tests
+│   │   │   │   ├── run_all_tests.sh   # Script to run all tests
+│   │   │   │   ├── test_helpers.sh    # Common test helper functions
+│   │   │   │   ├── test_basic_ops.sh  # Basic operations tests
+│   │   │   │   └── test_large_file_ops.sh  # Large file operations tests
+│   │   │   └── /unit             # Unit tests (to be implemented)
+│   │   ├── /docker               # Docker configuration for FUSE driver
 │   │   │   └── Dockerfile.dev    # Development environment for FUSE driver
 │   │   └── Makefile              # Build configuration for FUSE driver
 │   ├── /backend                  # Future Go backend service
 │   └── /dashboard                # Future web dashboard
 └── /scripts
     ├── build-fuse.sh             # Script to build the FUSE driver
-    └── run-fuse.sh               # Script to run the FUSE driver
+    ├── run-fuse.sh               # Script to run the FUSE driver
+    └── run_tests.sh              # Script to run all tests in Docker
 ```
 
-## Key Files Description
+## Implementation Status
 
-### FUSE Driver
+### FUSE Driver Component
 
-- **src/fuse-driver/src/fs_fault_injector.c**: Main FUSE driver file that intercepts filesystem operations. Currently implements basic functionality including `getattr` and `readdir` operations. Uses `/tmp/fs_fault_storage` as the backing storage location.
+- [x] FUSE driver core structure and separation of concerns
+- [x] Basic passthrough filesystem operations
+  - [x] File operations (read, write, create, open, release)
+  - [x] Directory operations (mkdir, rmdir, readdir)
+  - [x] File attribute operations (getattr)
+  - [x] Advanced operations (chmod, chown, truncate, utimens)
+- [x] Logging system with multiple levels
+- [x] Functional testing framework
+  - [x] Basic operations tests
+  - [x] Large file operations tests
+- [x] Docker development environment
+- [ ] Unit testing for fault conditions
+- [ ] Configuration mechanism for faults
+- [ ] Fault injection logic implementation
+- [ ] Performance monitoring
+- [ ] API for external control
 
-- **src/fuse-driver/Makefile**: Build configuration for the FUSE driver.
+### Network Layer (SMB)
 
-### Docker Configuration
+- [ ] Basic SMB server integration
+- [ ] Protocol-level fault injection
+- [ ] Authentication and share configuration
 
-- **src/fuse-driver/docker/Dockerfile.dev**: Development environment for the FUSE driver, based on Ubuntu 22.04 with all necessary dependencies.
+### Backend Service
 
-- **docker-compose.yml**: Main Docker Compose file at the root level that defines services. Currently only includes the FUSE driver container, but will be expanded for other services.
+- [ ] API server implementation
+- [ ] Metrics collection
+- [ ] Fault configuration management
 
-### Scripts
+### Web Dashboard
 
-- **scripts/build-fuse.sh**: Script that builds the FUSE driver inside the Docker container.
-
-- **scripts/run-fuse.sh**: Script that runs the FUSE driver inside the Docker container, mounting it at `/mnt/fs-fault`.
+- [ ] Basic monitoring interface
+- [ ] Fault configuration UI
+- [ ] Metrics visualization
 
 ## Development Workflow
 
@@ -139,43 +171,41 @@ The project uses Docker containers for consistent development environments:
 1. **Local Development**: Edit code on host machine using any editor
 2. **Build Process**: Use `./scripts/build-fuse.sh` to build inside Docker
 3. **Running**: Use `./scripts/run-fuse.sh` to run the FUSE driver
-4. **Testing**: Run unit tests and functional tests inside containers (to be implemented)
-
-## How FUSE Works in This Project
-
-The FUSE driver creates a virtual filesystem that intercepts operations and can selectively inject faults:
-
-1. **Mount Point**: When run, the FUSE driver mounts at `/mnt/fs-fault` in the container.
-
-2. **Storage Backend**: The actual data is stored at `/tmp/fs_fault_storage`.
-
-3. **Operation Interception**: All filesystem operations to the mount point are intercepted and processed by our implementation.
-
-4. **Passthrough Behavior**: Currently, operations are passed through to the real filesystem at the storage backend.
-
-5. **Unimplemented Operations**: If an operation is not implemented in our FUSE driver, FUSE will return a `-ENOSYS` error (Function not implemented) to the calling application.
-
-## Current Implementation Status
-
-- [x] Project structure setup
-- [x] Basic FUSE driver skeleton with minimal implementation
-- [x] Docker development environment
-- [x] Build and run scripts
-- [ ] Complete passthrough filesystem functionality
-- [ ] Fault injection framework
-- [ ] SMB server integration
-- [ ] Backend service
-- [ ] Web dashboard
+4. **Testing**: Use `./scripts/run_tests.sh` to run functional tests inside Docker
 
 ## Next Steps
 
-1. Implement remaining passthrough filesystem operations:
-   - `open`, `read`, `write`, `release` (close)
-   - `mkdir`, `rmdir`
-   - `create`, `unlink` (delete), `rename`
-   - `chmod`, `chown`, `truncate`
+1. Implement fault injection logic:
+   - Fault configuration mechanism
+   - Specific fault implementations
+   - Triggering conditions
 
-2. Add configuration mechanism for fault injection
-3. Implement fault injection logic within filesystem operations
-4. Add logging to track operations and injected faults
-5. Create initial unit tests for filesystem operations
+2. Create unit tests for fault scenarios:
+   - Silent data corruption
+   - Timing-based failures
+   - Operation-count failures
+
+3. Develop SMB layer:
+   - Integrate SMB server with FUSE
+   - Protocol-level fault injection
+
+4. Build backend service:
+   - RESTful API for configuration
+   - Metrics collection
+
+5. Develop web dashboard:
+   - Configuration UI
+   - Monitoring interface
+
+## Documentation Plan
+
+The project documentation is being maintained in several README files:
+- README.md - Public-facing documentation
+- README-LLM.md - This context document for AI assistant conversations
+- README-LLM-FUSE.md - Detailed documentation on the FUSE driver component
+
+Additional documentation will be added for:
+- Backend service
+- Network layer
+- Web dashboard
+- Deployment and usage instructions
