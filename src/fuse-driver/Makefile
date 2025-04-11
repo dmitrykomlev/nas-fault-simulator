@@ -1,6 +1,9 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g -D_FILE_OFFSET_BITS=64
-LDFLAGS = -lfuse -lpthread
+CFLAGS = -Wall -Wextra -Werror -g $(shell pkg-config fuse --cflags)
+LIBS = $(shell pkg-config fuse --libs) -lpthread
+
+# Directory for config files
+CONFDIR = /etc/nas-emu
 
 TARGET = nas-emu-fuse
 SRCDIR = src
@@ -9,33 +12,35 @@ OBJDIR = obj
 SOURCES = $(SRCDIR)/fs_fault_injector.c \
           $(SRCDIR)/fs_operations.c \
           $(SRCDIR)/fault_injector.c \
-          $(SRCDIR)/log.c
+          $(SRCDIR)/log.c \
+          $(SRCDIR)/config.c
 
-OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
+CONFIG_FILES = nas-emu-fuse.conf
 
-.PHONY: all clean
+OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
 
-all: directories $(TARGET)
+.PHONY: all clean install config
 
-directories:
-	@mkdir -p $(OBJDIR)
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+all: $(OBJDIR) $(TARGET) config
 
 $(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(OBJDIR) $(TARGET)
+	rm -f $(TARGET) $(OBJECTS)
+	rm -rf $(OBJDIR)
 
-# Testing targets
-.PHONY: test test-docker
+install: $(TARGET)
+	install -m 755 $(TARGET) /usr/local/bin/
+	mkdir -p $(CONFDIR)
+	install -m 644 $(CONFIG_FILES) $(CONFDIR)/
 
-test:
-	@echo "Running functional tests..."
-	@cd tests/functional && ./run_all_tests.sh
-
-test-docker:
-	@echo "Running tests in Docker container..."
-	@../scripts/run_tests.sh
+config:
+	mkdir -p $(CONFDIR)
+	[ -f $(CONFDIR)/nas-emu-fuse.conf ] || install -m 644 nas-emu-fuse.conf $(CONFDIR)/

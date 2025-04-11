@@ -93,6 +93,7 @@ The project is organized with the following structure:
 ```
 /nas-fault-simulator/
 ├── docker-compose.yml            # Main Docker Compose file for all services
+├── .env                          # Environment variables for Docker Compose
 ├── .gitignore                    # Git ignore file
 ├── README.md                     # Public documentation
 ├── README-LLM.md                 # This context document
@@ -105,6 +106,8 @@ The project is organized with the following structure:
 │   │   │   ├── fs_operations.h   # Headers for filesystem operations
 │   │   │   ├── fault_injector.c  # Fault injection logic
 │   │   │   ├── fault_injector.h  # Headers for fault injection
+│   │   │   ├── config.c          # Configuration system implementation
+│   │   │   ├── config.h          # Configuration system interface
 │   │   │   ├── log.c             # Logging system implementation
 │   │   │   └── log.h             # Logging system interface
 │   │   ├── /tests                # Tests for the FUSE driver
@@ -116,9 +119,11 @@ The project is organized with the following structure:
 │   │   │   └── /unit             # Unit tests (to be implemented)
 │   │   ├── /docker               # Docker configuration for FUSE driver
 │   │   │   └── Dockerfile.dev    # Development environment for FUSE driver
-│   │   └── Makefile              # Build configuration for FUSE driver
+│   │   ├── Makefile              # Build configuration for FUSE driver
+│   │   └── nas-emu-fuse.conf     # Configuration file for FUSE driver
 │   ├── /backend                  # Future Go backend service
 │   └── /dashboard                # Future web dashboard
+├── /nas-storage                  # Persistent storage for NAS data
 └── /scripts
     ├── build-fuse.sh             # Script to build the FUSE driver
     ├── run-fuse.sh               # Script to run the FUSE driver
@@ -136,12 +141,13 @@ The project is organized with the following structure:
   - [x] File attribute operations (getattr)
   - [x] Advanced operations (chmod, chown, truncate, utimens)
 - [x] Logging system with multiple levels
+- [x] Configuration system with file and command-line options
 - [x] Functional testing framework
   - [x] Basic operations tests
   - [x] Large file operations tests
 - [x] Docker development environment
+- [x] Persistent storage with host volume mapping
 - [ ] Unit testing for fault conditions
-- [ ] Configuration mechanism for faults
 - [ ] Fault injection logic implementation
 - [ ] Performance monitoring
 - [ ] API for external control
@@ -163,6 +169,65 @@ The project is organized with the following structure:
 - [ ] Basic monitoring interface
 - [ ] Fault configuration UI
 - [ ] Metrics visualization
+
+## Configuration System
+
+The NAS Emulator uses a flexible configuration system with multiple layers:
+
+1. **Command-line parameters** - Essential startup options and overrides
+2. **Configuration file** - Detailed settings including fault injection scenarios
+3. **Environment variables** - Docker runtime configuration
+
+### Configuration File
+The NAS Emulator uses a configuration file (`nas-emu-fuse.conf`) located in the FUSE driver directory. The file follows an INI-style format:
+
+```ini
+# Basic Settings
+storage_path = /var/nas-storage
+log_file = /var/log/nas-emu-fuse.log
+log_level = 2  # 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
+
+# Fault Injection Settings
+enable_fault_injection = false
+```
+
+### Docker Environment Variables
+- `NAS_STORAGE_PATH`: Path on the host for backing storage (default: ./nas-storage)
+
+### Command-Line Options
+- `--storage=PATH`: Path to the backing storage
+- `--log=PATH`: Path to the log file 
+- `--loglevel=LEVEL`: Log level (0-3)
+- `--config=PATH`: Path to the configuration file
+
+## Storage Configuration
+
+The FUSE driver now uses a persistent storage location for its backing storage instead of the previous temporary location. This change ensures that:
+
+1. Files are accessible from the host machine
+2. Data persists across container restarts and reboots
+3. Multiple containers can share the same backing storage
+
+### Storage Paths
+- Inside container: `/var/nas-storage` (configurable)
+- On host: `./nas-storage` (configurable via `NAS_STORAGE_PATH` environment variable)
+
+### Docker Volume Behavior
+- If the host storage directory doesn't exist, Docker will create it automatically
+- The directory permissions will be those of the Docker daemon (usually root)
+- You may need to adjust permissions if accessing from a regular user account
+
+## Networking Configuration
+
+The NAS Emulator is designed to expose SMB services for network access. When configuring ports:
+
+- The standard SMB port (445) may conflict with existing services on the host
+- For development, use an alternative port like 1445 to avoid conflicts
+- Configure your docker-compose.yml accordingly:
+  ```yaml
+  ports:
+    - "1445:445"  # Map container port 445 to host port 1445
+  ```
 
 ## Development Workflow
 

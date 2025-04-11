@@ -42,12 +42,12 @@ docker-compose exec -T fuse-dev bash -c "
     if ! mountpoint -q /mnt/fs-fault; then
         echo 'FUSE filesystem is not mounted. Starting it...'
         mkdir -p /mnt/fs-fault
-        mkdir -p /tmp/fs_fault_storage
-        chmod 777 /tmp/fs_fault_storage
+        mkdir -p \${STORAGE_PATH:-/var/nas-storage}
+        chmod 777 \${STORAGE_PATH:-/var/nas-storage}
         
         /app/src/fuse-driver/nas-emu-fuse /mnt/fs-fault -o allow_other \
-            --storage=/tmp/fs_fault_storage \
-            --log=/tmp/fuse_test.log \
+            --storage=\${STORAGE_PATH:-/var/nas-storage} \
+            --log=/var/log/nas-emu-fuse.log \
             --loglevel=3 > /dev/null 2>&1 &
         
         FUSE_PID=\$!
@@ -56,7 +56,7 @@ docker-compose exec -T fuse-dev bash -c "
         
         if ! mountpoint -q /mnt/fs-fault; then
             echo 'ERROR: Failed to mount FUSE filesystem!'
-            cat /tmp/fuse_test.log
+            cat /var/log/nas-emu-fuse.log
             exit 1
         fi
         

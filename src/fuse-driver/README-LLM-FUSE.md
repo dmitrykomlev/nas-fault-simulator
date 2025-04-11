@@ -18,6 +18,8 @@ The FUSE driver follows a clear separation of concerns between normal filesystem
 
 4. **Logging System** (`log.c`): Provides a flexible, thread-safe logging facility with multiple log levels.
 
+5. **Configuration System** (`config.c`): Manages configuration from files, command-line arguments, and default values.
+
 This separation allows the normal operations to be tested and stabilized independently of the fault injection logic.
 
 ## Directory Structure
@@ -25,12 +27,15 @@ This separation allows the normal operations to be tested and stabilized indepen
 ```
 /src/fuse-driver/
 ├── Makefile                # Build configuration
+├── nas-emu-fuse.conf       # Configuration file
 ├── /src
 │   ├── fs_fault_injector.c # Main entry point and FUSE wrappers
 │   ├── fs_operations.c     # Normal filesystem operations
 │   ├── fs_operations.h     # Interface for filesystem operations
 │   ├── fault_injector.c    # Fault injection logic 
 │   ├── fault_injector.h    # Interface for fault injection
+│   ├── config.c            # Configuration system
+│   ├── config.h            # Configuration interface
 │   ├── log.c               # Logging implementation
 │   └── log.h               # Logging interface
 ├── /tests
@@ -78,9 +83,46 @@ static struct fuse_operations fs_fault_oper = {
 int main(int argc, char *argv[]) {
     // Initialize logging, filesystem operations, and fault injector
     // Parse command line options
+    // Load configuration
     // Run FUSE main loop
 }
 ```
+
+### Configuration System
+
+**config.h** / **config.c**
+
+The configuration system provides a flexible way to manage settings from multiple sources:
+
+```c
+// Configuration structure
+typedef struct {
+    // Basic filesystem options
+    char *storage_path;      // Path to backing storage
+    char *log_file;          // Path to log file
+    int log_level;           // Log level (0-3)
+    
+    // Fault injection options (to be expanded later)
+    bool enable_fault_injection;  // Master switch for fault injection
+    
+    // Config file path (if used)
+    char *config_file;       // Path to configuration file
+} fs_config_t;
+
+// Initialize configuration with defaults
+void config_init(fs_config_t *config);
+
+// Load configuration from file
+bool config_load_from_file(fs_config_t *config, const char *filename);
+
+// Free configuration resources
+void config_cleanup(fs_config_t *config);
+```
+
+The configuration system follows a hierarchical priority:
+1. Command-line arguments (highest priority)
+2. Configuration file settings
+3. Default values (lowest priority)
 
 ### Filesystem Operations
 
@@ -130,25 +172,6 @@ int fs_op_read(const char *path, char *buf, size_t size, off_t offset, struct fu
 }
 ```
 
-**fs_operations.h**
-
-Defines the interface for filesystem operations:
-```c
-// Initialize the filesystem operations
-void fs_ops_init(const char *storage_dir);
-
-// Clean up filesystem operations
-void fs_ops_cleanup(void);
-
-// Filesystem operations
-int fs_op_getattr(const char *path, struct stat *stbuf);
-int fs_op_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi);
-// ... other operations
-
-// Helper functions
-char* get_full_path(const char *path);
-```
-
 ### Fault Injector
 
 **fault_injector.c**
@@ -177,23 +200,6 @@ void update_operation_stats(const char *operation, size_t bytes) {
     // Stub implementation - just log for now
     LOG_DEBUG("Operation stats: %s processed %zu bytes", operation, bytes);
 }
-```
-
-**fault_injector.h**
-
-Defines the interface for fault injection:
-```c
-// Initialize the fault injector
-void fault_injector_init(void);
-
-// Clean up fault injector resources
-void fault_injector_cleanup(void);
-
-// Check if a fault should be triggered for an operation
-bool should_trigger_fault(const char *operation);
-
-// Update operation statistics (e.g., bytes processed)
-void update_operation_stats(const char *operation, size_t bytes);
 ```
 
 ### Logging System
@@ -231,33 +237,50 @@ void log_message(log_level_t level, const char *format, ...) {
 }
 ```
 
-**log.h**
+## Configuration Options
 
-Defines the logging interface:
-```c
-// Log levels
-typedef enum {
-    LOG_ERROR,  // Critical errors
-    LOG_WARN,   // Warnings
-    LOG_INFO,   // Informational messages
-    LOG_DEBUG   // Detailed debug information
-} log_level_t;
+The FUSE driver can be configured through several methods:
 
-// Initialize logging system
-void log_init(const char *log_file, log_level_t level);
+### Configuration File
 
-// Close logging system
-void log_close(void);
+The configuration file (`nas-emu-fuse.conf`) is located in the FUSE driver directory and follows an INI-style format:
 
-// Log a message with specific level
-void log_message(log_level_t level, const char *format, ...);
+```ini
+# Basic Settings
+storage_path = /var/nas-storage
+log_file = /var/log/nas-emu-fuse.log
+log_level = 2  # 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
 
-// Helper macros for easier usage
-#define LOG_ERROR(fmt, ...) log_message(LOG_ERROR, fmt, ##__VA_ARGS__)
-#define LOG_WARN(fmt, ...)  log_message(LOG_WARN, fmt, ##__VA_ARGS__)
-#define LOG_INFO(fmt, ...)  log_message(LOG_INFO, fmt, ##__VA_ARGS__)
-#define LOG_DEBUG(fmt, ...) log_message(LOG_DEBUG, fmt, ##__VA_ARGS__)
+# Fault Injection Settings
+enable_fault_injection = false
 ```
+
+### Command-Line Arguments
+
+The driver supports these command-line arguments:
+
+- `--storage=PATH`: Path to the backing storage directory
+- `--log=PATH`: Path to the log file
+- `--loglevel=LEVEL`: Log level (0=ERROR, 1=WARN, 2=INFO, 3=DEBUG)
+- `--config=PATH`: Path to the configuration file
+
+### Environment Variables
+
+When run in the Docker container, the environment variable `STORAGE_PATH` can be used to set the storage path.
+
+## Storage Backend
+
+The FUSE driver now uses a persistent storage location instead of a temporary directory:
+
+- Inside container: `/var/nas-storage` (configurable)
+- On host: `./nas-storage` (configurable via `NAS_STORAGE_PATH` environment variable)
+
+This configuration ensures that:
+1. Files written through the FUSE layer persist across container restarts
+2. Files are accessible from the host for inspection or backup
+3. The storage behavior aligns with real NAS expectations
+
+If the host storage directory doesn't exist, Docker will create it automatically with the permissions of the Docker daemon (usually root). You may need to adjust permissions if accessing directly from your host user account.
 
 ## Testing Framework
 
@@ -324,31 +347,6 @@ test_file_create_read_write() {
 }
 ```
 
-3. **Test Assertions**:
-```bash
-# Assert file exists
-assert_file_exists() {
-    if [ ! -f "$1" ]; then
-        echo -e "${RED}ERROR: File $1 does not exist${NC}"
-        exit 1
-    fi
-}
-
-# Assert file content matches expected
-assert_file_content() {
-    local FILE="$1"
-    local EXPECTED="$2"
-    local CONTENT=$(cat "$FILE")
-    
-    if [ "$CONTENT" != "$EXPECTED" ]; then
-        echo -e "${RED}ERROR: Content mismatch in $FILE${NC}"
-        echo "Expected: $EXPECTED"
-        echo "Actual: $CONTENT"
-        exit 1
-    fi
-}
-```
-
 ## Fault Injection Design
 
 The fault injector is designed with a clear interface that allows for flexible fault configuration.
@@ -408,7 +406,7 @@ This script:
 This script:
 - Starts the Docker container if not running
 - Mounts the FUSE filesystem at `/mnt/fs-fault` in the container
-- Uses `/tmp/fs_fault_storage` as the backing storage
+- Uses `/var/nas-storage` as the backing storage (configurable)
 
 ### Running Tests
 
@@ -422,6 +420,18 @@ This script:
 - Checks if FUSE is mounted, and mounts it if not
 - Runs all functional tests
 - Reports test results
+
+## Networking Considerations
+
+The system is designed to expose SMB services on port 445, but this may conflict with existing services on the host. For development purposes, you can use an alternative port like 1445:
+
+```yaml
+# In docker-compose.yml
+ports:
+  - "1445:445"  # Map container port 445 to host port 1445
+```
+
+This avoids conflicts with any existing SMB services on the host machine.
 
 ## Future Enhancements
 

@@ -15,6 +15,11 @@ services:
     volumes:
       - .:/app
       - fuse-data:/mnt/fs-fault
+      - ${NAS_STORAGE_PATH:-./nas-storage}:/var/nas-storage
+    environment:
+      - STORAGE_PATH=/var/nas-storage
+    ports:
+      - "1445:445"   # SMB port (for future SMB server)
     command: tail -f /dev/null  # Keep container running
 
   # Future services will be added here:

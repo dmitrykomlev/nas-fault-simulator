@@ -12,22 +12,21 @@
 #include "fs_operations.h"
 #include "fault_injector.h"
 #include "log.h"
-
-// Default storage path
-static const char *default_storage_path = "/tmp/fs_fault_storage";
+#include "config.h"
 
 // Command line options structure
-struct fs_fault_config {
+struct fs_fault_options {
     char *storage_path;
     char *log_file;
     int log_level;
+    char *config_file;
+    int show_help;
 };
 
 // Global configuration
-static struct fs_fault_config config;
+static fs_config_t *config;
 
 // Wrapper functions that can inject faults
-
 static int fs_fault_getattr(const char *path, struct stat *stbuf) {
     if (should_trigger_fault("getattr")) {
         // Will implement fault behavior later
@@ -128,7 +127,6 @@ static int fs_fault_unlink(const char *path) {
 }
 
 // Add wrapper functions for the new operations
-
 static int fs_fault_chmod(const char *path, mode_t mode) {
     if (should_trigger_fault("chmod")) {
         // Will implement fault behavior later
@@ -179,15 +177,48 @@ static struct fuse_operations fs_fault_oper = {
     .utimens  = fs_fault_utimens,
 };
 
+// Helper function to display usage information
+static void show_help(const char *progname) {
+    printf("Usage: %s mountpoint [options]\n\n", progname);
+    printf("NAS Emulator FUSE Driver - A filesystem with fault injection capabilities\n\n");
+    printf("Options:\n");
+    printf("    --storage=PATH         Path to storage directory (default: /var/nas-storage)\n");
+    printf("    --log=PATH             Path to log file (default: stdout)\n");
+    printf("    --loglevel=LEVEL       Log level (0-3, default: 2)\n");
+    printf("    --config=PATH          Path to configuration file\n");
+    printf("    -h, --help             Display this help message\n\n");
+    printf("FUSE options:\n");
+    
+    // Let FUSE print its help message
+    struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
+    fuse_opt_add_arg(&args, progname);
+    fuse_opt_add_arg(&args, "-h");
+    fuse_parse_cmdline(&args, NULL, NULL, NULL);
+    fuse_opt_free_args(&args);
+}
+
 // FUSE option processing function
 static int fs_fault_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
-    struct fs_fault_config *cfg = (struct fs_fault_config*)data;
+    struct fs_fault_options *options = (struct fs_fault_options*)data;
     
-    (void)outargs; // Mark parameter as unused to fix warning
-    
-    if (key == FUSE_OPT_KEY_NONOPT && !cfg->storage_path && arg[0] != '-') {
-        // First non-option argument is the mount point, ignore it
+    if (key == FUSE_OPT_KEY_NONOPT && outargs->argc == 1) {
+        // First non-option argument is the mount point, keep it
         return 1;
+    }
+    
+    // Handle custom options
+    switch (key) {
+        case FUSE_OPT_KEY_OPT:
+            // Handle options in FUSE
+            return 1;
+            
+        case FUSE_OPT_KEY_NONOPT:
+            // Ignore other non-option arguments
+            return 1;
+            
+        case -1: // --help or -h
+            options->show_help = 1;
+            return 0;
     }
     
     return 1;  // Keep all other arguments
@@ -195,37 +226,74 @@ static int fs_fault_opt_proc(void *data, const char *arg, int key, struct fuse_a
 
 // FUSE option specification
 static struct fuse_opt fs_fault_opts[] = {
-    {"--storage=%s", offsetof(struct fs_fault_config, storage_path), 0},
-    {"--log=%s", offsetof(struct fs_fault_config, log_file), 0},
-    {"--loglevel=%d", offsetof(struct fs_fault_config, log_level), 0},
+    {"--storage=%s", offsetof(struct fs_fault_options, storage_path), 0},
+    {"--log=%s", offsetof(struct fs_fault_options, log_file), 0},
+    {"--loglevel=%d", offsetof(struct fs_fault_options, log_level), 0},
+    {"--config=%s", offsetof(struct fs_fault_options, config_file), 0},
+    {"-h", -1, 0},
+    {"--help", -1, 0},
     FUSE_OPT_END
 };
 
 int main(int argc, char *argv[]) {
     int ret;
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+    struct fs_fault_options options;
     
-    // Set default config values
-    memset(&config, 0, sizeof(config));
-    config.storage_path = strdup(default_storage_path);
-    config.log_file = strdup("stdout");
-    config.log_level = LOG_INFO;
+    // Set default option values
+    memset(&options, 0, sizeof(options));
     
     // Parse command line options
-    if (fuse_opt_parse(&args, &config, fs_fault_opts, fs_fault_opt_proc) == -1) {
+    if (fuse_opt_parse(&args, &options, fs_fault_opts, fs_fault_opt_proc) == -1) {
         return 1;
     }
     
+    // Show help if requested
+    if (options.show_help) {
+        show_help(argv[0]);
+        fuse_opt_free_args(&args);
+        return 0;
+    }
+    
+    // Initialize global configuration
+    config = config_get_global();
+    config_init(config);
+    
+    // Load configuration from file if specified
+    if (options.config_file) {
+        if (!config_load_from_file(config, options.config_file)) {
+            fprintf(stderr, "Warning: Failed to load configuration from %s\n", options.config_file);
+        }
+    }
+    
+    // Override config with command line options if specified
+    if (options.storage_path) {
+        free(config->storage_path);
+        config->storage_path = strdup(options.storage_path);
+    }
+    
+    if (options.log_file) {
+        free(config->log_file);
+        config->log_file = strdup(options.log_file);
+    }
+    
+    if (options.log_level) {
+        config->log_level = options.log_level;
+    }
+    
+    // Print configuration
+    config_print(config);
+    
     // Initialize logging
-    log_init(config.log_file, config.log_level);
+    log_init(config->log_file, config->log_level);
     LOG_INFO("Filesystem Fault Injector initializing...");
-    LOG_INFO("Using storage path: %s", config.storage_path);
+    LOG_INFO("Using storage path: %s", config->storage_path);
     
     // Create storage directory if it doesn't exist
-    mkdir(config.storage_path, 0755);
+    mkdir(config->storage_path, 0755);
     
     // Initialize filesystem operations
-    fs_ops_init(config.storage_path);
+    fs_ops_init(config->storage_path);
     
     // Initialize fault injector
     fault_injector_init();
@@ -236,11 +304,19 @@ int main(int argc, char *argv[]) {
     // Clean up resources
     fs_ops_cleanup();
     fault_injector_cleanup();
+    
+    // Clean up logging
     log_close();
     
-    // Free config strings
-    free(config.storage_path);
-    free(config.log_file);
+    // Clean up configuration
+    config_cleanup(config);
+    
+    // Free command line option strings
+    free(options.storage_path);
+    free(options.log_file);
+    free(options.config_file);
+    
+    // Free FUSE arguments
     fuse_opt_free_args(&args);
     
     return ret;
