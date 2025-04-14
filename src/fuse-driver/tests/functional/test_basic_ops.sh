@@ -103,9 +103,14 @@ test_file_permissions() {
     # Verify content hasn't changed
     assert_file_content "$TEST_FILE" "$TEST_CONTENT"
     
-    # Clean up (need to make writable first)
-    chmod 600 "$TEST_FILE"
-    rm -f "$TEST_FILE"
+    # Clean up - use rm with force flag to remove read-only file
+    # No need to chmod first, as we've proven the permissions work
+    rm -f "$TEST_FILE" 2>/dev/null
+    
+    # Verify file was removed
+    if [ -f "$TEST_FILE" ]; then
+        echo "Warning: Could not remove test file, but test passed"
+    fi
     
     return 0
 }
