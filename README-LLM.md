@@ -13,6 +13,7 @@ When backing up large datasets (terabytes) to NAS devices, various failure modes
 - Network disruptions during long operations
 - Intermittent failures based on timing or operation count
 - Data integrity issues during checkpoint operations
+- Permission-related failures that appear inconsistently
 
 These failures are difficult to reproduce reliably with real hardware, making systematic testing nearly impossible.
 
@@ -32,6 +33,7 @@ The NAS Emulator will simulate a real NAS device with configurable fault injecti
 - Implements configurable fault injection at the I/O level
 - Provides hooks for silent corruption, partial writes, timing-based failures
 - Exposes API for configuration and monitoring
+- Performs permission validation for all operations
 
 ### 2. Network Layer
 - SMB server implementation
@@ -94,12 +96,19 @@ The project is organized with the following structure:
 /nas-fault-simulator/
 ├── docker-compose.yml            # Main Docker Compose file for all services
 ├── .env                          # Environment variables for Docker Compose
+├── .env.local                    # Optional local environment overrides (git-ignored)
 ├── .gitignore                    # Git ignore file
 ├── README.md                     # Public documentation
 ├── README-LLM.md                 # This context document
-├── README-LLM-FUSE.md            # Detailed FUSE driver documentation
+├── README-LLM-CONF.md            # Configuration system documentation
+├── /scripts
+│   ├── config.sh                 # Configuration loader for scripts
+│   ├── build-fuse.sh             # Script to build the FUSE driver
+│   ├── run-fuse.sh               # Script to run the FUSE driver
+│   └── run_tests.sh              # Script to run all tests in Docker
 ├── /src
 │   ├── /fuse-driver              # FUSE filesystem implementation
+│   │   ├── README-LLM-FUSE.md    # Detailed FUSE driver documentation
 │   │   ├── /src                  # Source code for FUSE driver
 │   │   │   ├── fs_fault_injector.c  # Main FUSE driver with fault wrappers
 │   │   │   ├── fs_operations.c   # Normal filesystem operations
@@ -123,11 +132,7 @@ The project is organized with the following structure:
 │   │   └── nas-emu-fuse.conf     # Configuration file for FUSE driver
 │   ├── /backend                  # Future Go backend service
 │   └── /dashboard                # Future web dashboard
-├── /nas-storage                  # Persistent storage for NAS data
-└── /scripts
-    ├── build-fuse.sh             # Script to build the FUSE driver
-    ├── run-fuse.sh               # Script to run the FUSE driver
-    └── run_tests.sh              # Script to run all tests in Docker
+└── /nas-storage                  # Persistent storage for NAS data (created by Docker)
 ```
 
 ## Implementation Status
@@ -140,6 +145,7 @@ The project is organized with the following structure:
   - [x] Directory operations (mkdir, rmdir, readdir)
   - [x] File attribute operations (getattr)
   - [x] Advanced operations (chmod, chown, truncate, utimens)
+- [x] Permission checking for all filesystem operations 
 - [x] Logging system with multiple levels
 - [x] Configuration system with file and command-line options
 - [x] Functional testing framework
@@ -148,8 +154,8 @@ The project is organized with the following structure:
 - [x] Docker development environment
 - [x] Persistent storage with host volume mapping
 - [ ] Unit testing for fault conditions
-- [ ] Fault injection logic implementation
-- [ ] Performance monitoring
+- [ ] Fault injection logic implementation (stubs are in place)
+- [ ] Performance monitoring 
 - [ ] API for external control
 
 ### Network Layer (SMB)
@@ -178,95 +184,132 @@ The NAS Emulator uses a flexible configuration system with multiple layers:
 2. **Configuration file** - Detailed settings including fault injection scenarios
 3. **Environment variables** - Docker runtime configuration
 
-### Configuration File
-The NAS Emulator uses a configuration file (`nas-emu-fuse.conf`) located in the FUSE driver directory. The file follows an INI-style format:
+See README-LLM-CONF.md for detailed information about the configuration system.
 
-```ini
-# Basic Settings
-storage_path = /var/nas-storage
-log_file = /var/log/nas-emu-fuse.log
-log_level = 2  # 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
+## Docker Environment
 
-# Fault Injection Settings
-enable_fault_injection = false
-```
+The project uses Docker for consistent development environments and deployment:
 
-### Docker Environment Variables
-- `NAS_STORAGE_PATH`: Path on the host for backing storage (default: ./nas-storage)
+### Docker Components
 
-### Command-Line Options
-- `--storage=PATH`: Path to the backing storage
-- `--log=PATH`: Path to the log file 
-- `--loglevel=LEVEL`: Log level (0-3)
-- `--config=PATH`: Path to the configuration file
+- **Docker Compose**: Defines the main services and their dependencies
+- **Docker Container**: Provides a consistent environment with all necessary dependencies
+- **FUSE Driver Container**: Runs with privileged mode to enable FUSE filesystem mounting
 
-## Storage Configuration
+### Docker Requirements
 
-The FUSE driver now uses a persistent storage location for its backing storage instead of the previous temporary location. This change ensures that:
+- Docker Engine 19.03+ with Docker Compose
+- Linux host with FUSE support or Docker Desktop for Mac/Windows
+- Privileged container mode (`--privileged`)
+- SYS_ADMIN capability and device access (`/dev/fuse`)
 
-1. Files are accessible from the host machine
-2. Data persists across container restarts and reboots
-3. Multiple containers can share the same backing storage
-
-### Storage Paths
-- Inside container: `/var/nas-storage` (configurable)
-- On host: `./nas-storage` (configurable via `NAS_STORAGE_PATH` environment variable)
-
-### Docker Volume Behavior
-- If the host storage directory doesn't exist, Docker will create it automatically
-- The directory permissions will be those of the Docker daemon (usually root)
-- You may need to adjust permissions if accessing from a regular user account
-
-## Networking Configuration
-
-The NAS Emulator is designed to expose SMB services for network access. When configuring ports:
-
-- The standard SMB port (445) may conflict with existing services on the host
-- For development, use an alternative port like 1445 to avoid conflicts
-- Configure your docker-compose.yml accordingly:
-  ```yaml
-  ports:
-    - "1445:445"  # Map container port 445 to host port 1445
-  ```
-
-## Development Workflow
-
-The project uses Docker containers for consistent development environments:
+### Development Workflow with Docker
 
 1. **Local Development**: Edit code on host machine using any editor
 2. **Build Process**: Use `./scripts/build-fuse.sh` to build inside Docker
 3. **Running**: Use `./scripts/run-fuse.sh` to run the FUSE driver
 4. **Testing**: Use `./scripts/run_tests.sh` to run functional tests inside Docker
 
+## Current Implementation Details
+
+### FUSE Driver
+
+The FUSE driver implementation includes:
+
+1. **Wrapper Functions**: Each filesystem operation is wrapped with a fault injection check:
+   ```c
+   static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
+                           struct fuse_file_info *fi) {
+       if (should_trigger_fault("read")) {
+           // Will implement fault behavior later
+           LOG_DEBUG("Fault would be triggered for read: %s", path);
+       }
+       return fs_op_read(path, buf, size, offset, fi);
+   }
+   ```
+
+2. **Permission Validation**: All operations validate appropriate permissions:
+   ```c
+   static int fs_fault_write(const char *path, const char *buf, size_t size, 
+                            off_t offset, struct fuse_file_info *fi) {
+       if (should_trigger_fault("write")) {
+           LOG_DEBUG("Fault would be triggered for write: %s", path);
+       }
+
+       // Always check write permission
+       int res = fs_op_access(path, W_OK);
+       if (res != 0) {
+           LOG_DEBUG("Write denied due to permission check: %s", path);
+           return res;
+       }
+
+       return fs_op_write(path, buf, size, offset, fi);
+   }
+   ```
+
+3. **Fault Injection Hooks**: The system includes hooks for fault injection:
+   ```c
+   // Check if a fault should be triggered for an operation
+   bool should_trigger_fault(const char *operation) {
+       // Stub implementation - no faults for now
+       LOG_DEBUG("Checking fault for operation: %s (none configured)", operation);
+       return false;
+   }
+   ```
+
+4. **Operation Statistics**: The system tracks operation statistics:
+   ```c
+   // Update operation statistics (e.g., bytes processed)
+   void update_operation_stats(const char *operation, size_t bytes) {
+       // Stub implementation - just log for now
+       LOG_DEBUG("Operation stats: %s processed %zu bytes", operation, bytes);
+   }
+   ```
+
+### Testing Framework
+
+The testing framework includes:
+
+1. **Functional Tests**: Basic filesystem operation tests
+2. **Large File Tests**: Performance and reliability tests with larger files
+3. **Test Helpers**: Common utilities for test setup, assertions, and cleanup
+4. **Test Runner**: Script to run all test suites and report results
+
 ## Next Steps
 
 1. Implement fault injection logic:
-   - Fault configuration mechanism
-   - Specific fault implementations
-   - Triggering conditions
+   - Complete the fault configuration mechanism
+   - Implement specific fault behaviors
+   - Define triggering conditions
+   - Add fault probability controls
 
 2. Create unit tests for fault scenarios:
-   - Silent data corruption
-   - Timing-based failures
-   - Operation-count failures
+   - Silent data corruption tests
+   - Timing-based failure tests
+   - Operation-count failure tests
+   - Permission-based failure tests
 
 3. Develop SMB layer:
-   - Integrate SMB server with FUSE
-   - Protocol-level fault injection
+   - Integrate Samba server with FUSE
+   - Implement protocol-level fault injection
+   - Configure share permissions
 
 4. Build backend service:
-   - RESTful API for configuration
-   - Metrics collection
+   - Create RESTful API for configuration
+   - Implement metrics collection
+   - Develop fault scenario management
 
 5. Develop web dashboard:
-   - Configuration UI
-   - Monitoring interface
+   - Create configuration UI
+   - Build monitoring interface
+   - Add visualization of metrics
 
 ## Documentation Plan
 
 The project documentation is being maintained in several README files:
 - README.md - Public-facing documentation
 - README-LLM.md - This context document for AI assistant conversations
+- README-LLM-CONF.md - Configuration system documentation
 - README-LLM-FUSE.md - Detailed documentation on the FUSE driver component
 
 Additional documentation will be added for:

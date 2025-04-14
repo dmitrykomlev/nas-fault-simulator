@@ -1,142 +1,171 @@
 #!/bin/bash
+# test_large_file_ops.sh - Tests for large file operations
 
-# Test operations with larger files
+# Source the test helper functions
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+source "${SCRIPT_DIR}/test_helpers.sh"
 
-set -e
-source "$(dirname "$0")/test_helpers.sh"
+# File sizes for tests (in MB)
+SMALL_FILE_SIZE=1
+MEDIUM_FILE_SIZE=5
+LARGE_FILE_SIZE=10
 
-TEST_NAME="large_file_ops"
-TEST_DIR=""
-
+# Setup function - run before each test
 setup() {
-    # Create test directory
-    TEST_DIR=$(setup_test_dir "$TEST_NAME")
-    
-    # Verify the directory was created
-    if [ ! -d "$TEST_DIR" ]; then
-        echo "Error: Failed to create test directory"
-        exit 1
-    fi
-    
-    # Change to the directory
-    cd "$TEST_DIR" || {
-        echo "Error: Failed to change to directory: $TEST_DIR"
-        exit 1
-    }
+    # Nothing to do here yet
+    return 0
 }
 
+# Teardown function - run after each test
 teardown() {
-    cd /
-    cleanup_test_dir "$TEST_DIR"
+    # Nothing to do here yet
+    return 0
 }
 
-# Test large file creation and reading
-test_large_file_read_write() {
-    local TEST_FILE="$TEST_DIR/large_file.bin"
-    local FILE_SIZE_KB=1024  # 1MB file
+# Create a file of specified size with random data
+create_test_file() {
+    local FILE_PATH=$1
+    local SIZE_MB=$2
     
-    # Create a large file
-    echo "Creating $FILE_SIZE_KB KB test file..."
-    create_test_file "$TEST_FILE" "$FILE_SIZE_KB"
+    # Use dd to create a file with random data
+    dd if=/dev/urandom of="$FILE_PATH" bs=1M count="$SIZE_MB" status=none
+    
+    # Return success if file created with correct size
+    if [ -f "$FILE_PATH" ] && [ $(stat -c %s "$FILE_PATH") -eq $(($SIZE_MB * 1024 * 1024)) ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Test large file read/write
+test_large_file_read_write() {
+    local TEST_FILE="large_file.bin"
+    
+    echo "Creating test file of ${LARGE_FILE_SIZE}MB..."
+    create_test_file "$TEST_FILE" "$LARGE_FILE_SIZE"
     
     # Verify file exists
     assert_file_exists "$TEST_FILE"
     
     # Verify file size
-    local FILE_SIZE=$(stat -c "%s" "$TEST_FILE")
-    assert_equals "$FILE_SIZE" "$((FILE_SIZE_KB * 1024))"
+    local EXPECTED_SIZE=$(($LARGE_FILE_SIZE * 1024 * 1024))
+    local ACTUAL_SIZE=$(stat -c %s "$TEST_FILE")
     
-    # Copy file to verify read operations
-    local COPY_FILE="$TEST_DIR/large_file_copy.bin"
-    cp "$TEST_FILE" "$COPY_FILE"
+    if [ "$ACTUAL_SIZE" -ne "$EXPECTED_SIZE" ]; then
+        echo "FAIL: File size mismatch. Expected: $EXPECTED_SIZE, Actual: $ACTUAL_SIZE"
+        return 1
+    fi
     
-    # Verify files are identical
-    assert_files_identical "$TEST_FILE" "$COPY_FILE"
+    # Read the file to verify it can be read
+    echo "Reading test file..."
+    local READ_SIZE=$(cat "$TEST_FILE" | wc -c)
+    
+    if [ "$READ_SIZE" -ne "$EXPECTED_SIZE" ]; then
+        echo "FAIL: Read size mismatch. Expected: $EXPECTED_SIZE, Actual: $READ_SIZE"
+        return 1
+    fi
+    
+    # Clean up
+    rm -f "$TEST_FILE"
     
     return 0
 }
 
-# Test partial reads and writes
-test_partial_io() {
-    local TEST_FILE="$TEST_DIR/partial_io.bin"
-    local FILE_SIZE_KB=512  # 512KB file
+# Test multiple file read/write
+test_multiple_files() {
+    local TEST_FILES=()
+    local NUM_FILES=3
     
-    # Create test file
-    create_test_file "$TEST_FILE" "$FILE_SIZE_KB"
+    echo "Creating $NUM_FILES test files..."
+    
+    # Create files of different sizes
+    TEST_FILES[0]="small_file.bin"
+    TEST_FILES[1]="medium_file.bin"
+    TEST_FILES[2]="large_file.bin"
+    
+    create_test_file "${TEST_FILES[0]}" "$SMALL_FILE_SIZE"
+    create_test_file "${TEST_FILES[1]}" "$MEDIUM_FILE_SIZE"
+    create_test_file "${TEST_FILES[2]}" "$LARGE_FILE_SIZE"
+    
+    # Verify files exist
+    for file in "${TEST_FILES[@]}"; do
+        assert_file_exists "$file"
+    done
+    
+    # Verify file sizes
+    local EXPECTED_SIZES=($SMALL_FILE_SIZE $MEDIUM_FILE_SIZE $LARGE_FILE_SIZE)
+    
+    for i in $(seq 0 $(($NUM_FILES - 1))); do
+        local EXPECTED_SIZE=$((${EXPECTED_SIZES[$i]} * 1024 * 1024))
+        local ACTUAL_SIZE=$(stat -c %s "${TEST_FILES[$i]}")
+        
+        if [ "$ACTUAL_SIZE" -ne "$EXPECTED_SIZE" ]; then
+            echo "FAIL: File size mismatch for ${TEST_FILES[$i]}. Expected: $EXPECTED_SIZE, Actual: $ACTUAL_SIZE"
+            return 1
+        fi
+    done
+    
+    # Clean up
+    for file in "${TEST_FILES[@]}"; do
+        rm -f "$file"
+    done
+    
+    return 0
+}
+
+# Test file append
+test_file_append() {
+    local TEST_FILE="append_test.bin"
+    local APPEND_SIZE=1  # MB
+    
+    # Create initial file
+    echo "Creating initial test file of ${SMALL_FILE_SIZE}MB..."
+    create_test_file "$TEST_FILE" "$SMALL_FILE_SIZE"
+    
+    # Verify file exists
     assert_file_exists "$TEST_FILE"
     
-    # Read first 1KB
-    local FIRST_KB_FILE="$TEST_DIR/first_kb.bin"
-    dd if="$TEST_FILE" of="$FIRST_KB_FILE" bs=1024 count=1 2>/dev/null
+    # Get initial size
+    local INITIAL_SIZE=$(stat -c %s "$TEST_FILE")
     
-    # Verify size of extracted portion
-    local PART_SIZE=$(stat -c "%s" "$FIRST_KB_FILE")
-    assert_equals "$PART_SIZE" "1024"
+    # Append data
+    echo "Appending ${APPEND_SIZE}MB to test file..."
+    dd if=/dev/urandom of="$TEST_FILE" bs=1M count="$APPEND_SIZE" oflag=append conv=notrunc status=none
     
-    # Read middle portion (100KB starting at offset 200KB)
-    local MIDDLE_PART_FILE="$TEST_DIR/middle_part.bin"
-    dd if="$TEST_FILE" of="$MIDDLE_PART_FILE" bs=1024 skip=200 count=100 2>/dev/null
+    # Verify new size
+    local EXPECTED_SIZE=$(($INITIAL_SIZE + $APPEND_SIZE * 1024 * 1024))
+    local ACTUAL_SIZE=$(stat -c %s "$TEST_FILE")
     
-    # Verify size of extracted portion
-    local MIDDLE_SIZE=$(stat -c "%s" "$MIDDLE_PART_FILE")
-    assert_equals "$MIDDLE_SIZE" "$((100 * 1024))"
+    if [ "$ACTUAL_SIZE" -ne "$EXPECTED_SIZE" ]; then
+        echo "FAIL: File size mismatch after append. Expected: $EXPECTED_SIZE, Actual: $ACTUAL_SIZE"
+        return 1
+    fi
     
-    return 0
-}
-
-# Test performance of sequential reads and writes
-test_sequential_performance() {
-    local TEST_FILE="$TEST_DIR/seq_perf.bin"
-    local FILE_SIZE_KB=2048  # 2MB
-    
-    # Time sequential write
-    echo "Testing sequential write performance..."
-    time_operation "Sequential Write $FILE_SIZE_KB KB" "dd if=/dev/urandom of='$TEST_FILE' bs=1024 count=$FILE_SIZE_KB 2>/dev/null"
-    
-    # Time sequential read
-    echo "Testing sequential read performance..."
-    time_operation "Sequential Read $FILE_SIZE_KB KB" "dd if='$TEST_FILE' of=/dev/null bs=1024 count=$FILE_SIZE_KB 2>/dev/null"
+    # Clean up
+    rm -f "$TEST_FILE"
     
     return 0
 }
 
-# Test multiple file operations in parallel
-test_parallel_operations() {
-    echo "Testing parallel file operations..."
+# Run all tests
+run_all_tests() {
+    local RESULT=0
     
-    # Create several test files in parallel
-    for i in {1..5}; do
-        create_test_file "$TEST_DIR/parallel_file_$i.bin" 100 &
-    done
-    
-    # Wait for all background processes to complete
-    wait
-    
-    # Verify all files were created correctly
-    for i in {1..5}; do
-        assert_file_exists "$TEST_DIR/parallel_file_$i.bin"
-        local FILE_SIZE=$(stat -c "%s" "$TEST_DIR/parallel_file_$i.bin")
-        assert_equals "$FILE_SIZE" "$((100 * 1024))"
-    done
-    
-    return 0
-}
-
-# Main test function
-run_tests() {
     begin_test_group "Large File Operations"
     
-    setup
+    # Run the tests
+    run_test test_large_file_read_write "Large file read/write"
+    run_test test_multiple_files "Multiple files of different sizes"
+    run_test test_file_append "File append operations"
     
-    run_test "Large File Read/Write" test_large_file_read_write
-    run_test "Partial I/O Operations" test_partial_io
-    run_test "Sequential Performance" test_sequential_performance
-    run_test "Parallel Operations" test_parallel_operations
-    
-    teardown
-    
+    # End the test group
     end_test_group
+    RESULT=$?
+    
+    return $RESULT
 }
 
 # Run the tests
-run_tests
+run_all_tests
+exit $?

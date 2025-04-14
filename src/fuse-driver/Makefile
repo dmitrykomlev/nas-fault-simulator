@@ -1,46 +1,50 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -Werror -g $(shell pkg-config fuse --cflags)
-LIBS = $(shell pkg-config fuse --libs) -lpthread
+CC=gcc
+CFLAGS=-Wall -g -D_FILE_OFFSET_BITS=64 `pkg-config fuse --cflags`
+LDFLAGS=`pkg-config fuse --libs` -lpthread
 
-# Directory for config files
-CONFDIR = /etc/nas-emu
+# Target executable
+TARGET=nas-emu-fuse
 
-TARGET = nas-emu-fuse
-SRCDIR = src
-OBJDIR = obj
+# Source files
+SRC=src/fs_fault_injector.c src/fs_operations.c src/fault_injector.c src/log.c src/config.c
 
-SOURCES = $(SRCDIR)/fs_fault_injector.c \
-          $(SRCDIR)/fs_operations.c \
-          $(SRCDIR)/fault_injector.c \
-          $(SRCDIR)/log.c \
-          $(SRCDIR)/config.c
+# Object files directory
+OBJ_DIR=obj
 
-CONFIG_FILES = nas-emu-fuse.conf
+# Object files
+OBJ=$(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRC))
 
-OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+# Include environment variables from .env if it exists
+-include ../.env
 
-.PHONY: all clean install config
+# Default values for environment variables
+NAS_MOUNT_POINT ?= /mnt/nas-mount
+NAS_STORAGE_PATH ?= /var/nas-storage
+NAS_LOG_FILE ?= /var/log/nas-emu.log
+NAS_LOG_LEVEL ?= 2
 
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
+# Append environment variable definitions to CFLAGS
+CFLAGS += -DNAS_MOUNT_POINT=\"$(NAS_MOUNT_POINT)\" \
+         -DNAS_STORAGE_PATH=\"$(NAS_STORAGE_PATH)\" \
+         -DNAS_LOG_FILE=\"$(NAS_LOG_FILE)\" \
+         -DNAS_LOG_LEVEL=$(NAS_LOG_LEVEL)
 
-all: $(OBJDIR) $(TARGET) config
+all: $(TARGET)
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+# Create object directory if it doesn't exist
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
 
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
+# Compile source files
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Link target executable
+$(TARGET): $(OBJ)
+	$(CC) -o $(TARGET) $(OBJ) $(LDFLAGS)
+
 clean:
-	rm -f $(TARGET) $(OBJECTS)
-	rm -rf $(OBJDIR)
+	rm -f $(TARGET) $(OBJ)
+	rm -rf $(OBJ_DIR)
 
-install: $(TARGET)
-	install -m 755 $(TARGET) /usr/local/bin/
-	mkdir -p $(CONFDIR)
-	install -m 644 $(CONFIG_FILES) $(CONFDIR)/
-
-config:
-	mkdir -p $(CONFDIR)
-	[ -f $(CONFDIR)/nas-emu-fuse.conf ] || install -m 644 nas-emu-fuse.conf $(CONFDIR)/
+.PHONY: all clean

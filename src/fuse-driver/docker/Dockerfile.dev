@@ -16,6 +16,19 @@ RUN apt-get update && apt-get install -y \
 # Create working directory
 WORKDIR /app
 
+# Set environment variables with default values
+ENV NAS_MOUNT_POINT=/mnt/nas-mount \
+    NAS_STORAGE_PATH=/var/nas-storage \
+    NAS_LOG_FILE=/var/log/nas-emu.log \
+    NAS_LOG_LEVEL=2
+
+# Create necessary directories
+RUN mkdir -p ${NAS_MOUNT_POINT} && \
+    mkdir -p ${NAS_STORAGE_PATH} && \
+    mkdir -p $(dirname ${NAS_LOG_FILE}) && \
+    # Create directories for build
+    mkdir -p /app/src/fuse-driver/obj
+
 # Mount point for source code volume
 VOLUME ["/app"]
 

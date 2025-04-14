@@ -1,4 +1,57 @@
-# NAS Emulator FUSE Driver - Detailed Documentation
+## Performance Considerations
+
+The FUSE driver has been designed with performance in mind, but there are some inherent limitations to be aware of:
+
+1. **FUSE Overhead**: 
+   - The FUSE architecture introduces additional context switches
+   - Each filesystem operation requires a user-space to kernel-space transition
+   - This overhead is typically 5-15% depending on the operation
+
+2. **Docker Container Impact**:
+   - Running in a Docker container adds a small additional overhead
+   - Volume mounts through Docker can have performance implications
+   - Networking through Docker can add latency to SMB operations
+
+3. **Performance Improvement Strategies**:
+   - Enable kernel buffer caching where possible
+   - Use direct_io only when necessary for fault scenarios
+   - Allow multithreaded operation (default in FUSE 3.x)
+   - Optimize path translation and string handling in hot paths
+
+4. **Monitoring Performance**:
+   - The logging system can track operation timing
+   - Future versions will include more detailed performance metrics
+   - Using external tools like `iotop`, `iostat`, and `fio` for benchmarking
+
+## Debugging Tips
+
+When troubleshooting issues with the FUSE driver, these approaches can be helpful:
+
+1. **Increase Log Level**:
+   - Set `--loglevel=3` (DEBUG) for maximum logging
+   - View logs with `docker-compose exec fuse-dev cat ${NAS_LOG_FILE}`
+
+2. **Run in Foreground with Debug**:
+   - Stop the background FUSE process
+   - Run manually with `./nas-emu-fuse ${NAS_MOUNT_POINT} -f -d`
+   - The `-f` option keeps it in foreground
+   - The `-d` option enables debug output
+
+3. **Check Mount Status**:
+   - `docker-compose exec fuse-dev mount | grep fuse`
+   - `docker-compose exec fuse-dev findmnt -t fuse`
+
+4. **Verify Processes**:
+   - `docker-compose exec fuse-dev ps aux | grep nas-emu-fuse`
+   - `docker-compose exec fuse-dev lsof | grep ${NAS_MOUNT_POINT}`
+
+5. **Examine System Logs**:
+   - `docker-compose exec fuse-dev dmesg | tail`
+   - Check for FUSE-related kernel messages
+
+6. **Test Basic Functionality**:
+   - Create a simple file: `docker-compose exec fuse-dev touch ${NAS_MOUNT_POINT}/test.txt`
+   - Verify it appears in storage: `docker-compose exec fuse-dev ls -la ${NAS_STORAGE_PATH}`# NAS Emulator FUSE Driver - Detailed Documentation
 
 > **Note**: This is a private context document to maintain knowledge continuity in AI assistant conversations about the FUSE driver component.
 
@@ -28,6 +81,7 @@ This separation allows the normal operations to be tested and stabilized indepen
 /src/fuse-driver/
 ├── Makefile                # Build configuration
 ├── nas-emu-fuse.conf       # Configuration file
+├── README-LLM-FUSE.md      # This documentation file
 ├── /src
 │   ├── fs_fault_injector.c # Main entry point and FUSE wrappers
 │   ├── fs_operations.c     # Normal filesystem operations
@@ -60,6 +114,7 @@ This is the main entry point for the FUSE driver. It:
 - Contains the FUSE operation structure that maps filesystem requests to handlers
 - Wraps each filesystem operation with fault injection checks
 - Manages command line arguments and configuration
+- Validates permissions for each operation
 
 Key sections:
 ```c
@@ -88,6 +143,31 @@ int main(int argc, char *argv[]) {
 }
 ```
 
+### Permission Validation
+
+For operations that modify the filesystem, permission checks are implemented:
+
+```c
+static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+    if (should_trigger_fault("write")) {
+        // Will implement fault behavior later
+        LOG_DEBUG("Fault would be triggered for write: %s", path);
+    }
+
+    // Always check write permission, regardless of whether we have a file handle
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
+        LOG_DEBUG("Write denied due to permission check: %s", path);
+        return res;
+    }
+
+    // Update operation statistics
+    update_operation_stats("write", size);
+
+    return fs_op_write(path, buf, size, offset, fi);
+}
+```
+
 ### Configuration System
 
 **config.h** / **config.c**
@@ -98,6 +178,7 @@ The configuration system provides a flexible way to manage settings from multipl
 // Configuration structure
 typedef struct {
     // Basic filesystem options
+    char *mount_point;       // Path to FUSE mount point
     char *storage_path;      // Path to backing storage
     char *log_file;          // Path to log file
     int log_level;           // Log level (0-3)
@@ -122,7 +203,8 @@ void config_cleanup(fs_config_t *config);
 The configuration system follows a hierarchical priority:
 1. Command-line arguments (highest priority)
 2. Configuration file settings
-3. Default values (lowest priority)
+3. Environment variables
+4. Default values (lowest priority)
 
 ### Filesystem Operations
 
@@ -131,6 +213,7 @@ The configuration system follows a hierarchical priority:
 Implements the normal passthrough filesystem operations. Each function:
 - Logs the operation details
 - Converts the path to a full path in the backing storage
+- Performs permission checks when appropriate
 - Calls the corresponding system function
 - Handles errors and returns appropriate FUSE error codes
 
@@ -143,6 +226,13 @@ int fs_op_read(const char *path, char *buf, size_t size, off_t offset, struct fu
     int res;
     
     if (fi == NULL) {
+        // No file handle provided, check read permission
+        int perms = check_file_perms(path, R_OK);
+        if (perms != 0) {
+            LOG_DEBUG("read denied: no read permission for %s", path);
+            return perms;
+        }
+        
         char *fullpath = get_full_path(path);
         if (!fullpath) return -ENOMEM;
         
@@ -171,293 +261,3 @@ int fs_op_read(const char *path, char *buf, size_t size, off_t offset, struct fu
     return res;
 }
 ```
-
-### Fault Injector
-
-**fault_injector.c**
-
-Currently contains stub implementations for fault injection. This will be expanded to include:
-- Fault type configuration
-- Fault trigger conditions
-- Fault behavior implementation
-
-Current implementation:
-```c
-// Initialize the fault injector
-void fault_injector_init(void) {
-    LOG_INFO("Fault injector initialized");
-}
-
-// Check if a fault should be triggered for an operation
-bool should_trigger_fault(const char *operation) {
-    // Stub implementation - no faults for now
-    LOG_DEBUG("Checking fault for operation: %s (none configured)", operation);
-    return false;
-}
-
-// Update operation statistics (e.g., bytes processed)
-void update_operation_stats(const char *operation, size_t bytes) {
-    // Stub implementation - just log for now
-    LOG_DEBUG("Operation stats: %s processed %zu bytes", operation, bytes);
-}
-```
-
-### Logging System
-
-**log.c**
-
-Implements a thread-safe logging system with multiple log levels:
-```c
-// Initialize logging system
-void log_init(const char *log_file, log_level_t level) {
-    pthread_mutex_lock(&log_mutex);
-    
-    // Set log level
-    current_log_level = level;
-    
-    // Open log file
-    // ...
-    
-    pthread_mutex_unlock(&log_mutex);
-}
-
-// Log a message with specific level
-void log_message(log_level_t level, const char *format, ...) {
-    // Skip if level is higher than current level
-    if (level > current_log_level || log_file_handle == NULL) {
-        return;
-    }
-    
-    pthread_mutex_lock(&log_mutex);
-    
-    // Format and print log message
-    // ...
-    
-    pthread_mutex_unlock(&log_mutex);
-}
-```
-
-## Configuration Options
-
-The FUSE driver can be configured through several methods:
-
-### Configuration File
-
-The configuration file (`nas-emu-fuse.conf`) is located in the FUSE driver directory and follows an INI-style format:
-
-```ini
-# Basic Settings
-storage_path = /var/nas-storage
-log_file = /var/log/nas-emu-fuse.log
-log_level = 2  # 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG
-
-# Fault Injection Settings
-enable_fault_injection = false
-```
-
-### Command-Line Arguments
-
-The driver supports these command-line arguments:
-
-- `--storage=PATH`: Path to the backing storage directory
-- `--log=PATH`: Path to the log file
-- `--loglevel=LEVEL`: Log level (0=ERROR, 1=WARN, 2=INFO, 3=DEBUG)
-- `--config=PATH`: Path to the configuration file
-
-### Environment Variables
-
-When run in the Docker container, the environment variable `STORAGE_PATH` can be used to set the storage path.
-
-## Storage Backend
-
-The FUSE driver now uses a persistent storage location instead of a temporary directory:
-
-- Inside container: `/var/nas-storage` (configurable)
-- On host: `./nas-storage` (configurable via `NAS_STORAGE_PATH` environment variable)
-
-This configuration ensures that:
-1. Files written through the FUSE layer persist across container restarts
-2. Files are accessible from the host for inspection or backup
-3. The storage behavior aligns with real NAS expectations
-
-If the host storage directory doesn't exist, Docker will create it automatically with the permissions of the Docker daemon (usually root). You may need to adjust permissions if accessing directly from your host user account.
-
-## Testing Framework
-
-The FUSE driver includes a comprehensive functional testing framework to ensure that the basic filesystem operations work correctly.
-
-### Test Structure
-
-The testing framework consists of:
-
-1. **Test Helper Functions** (`test_helpers.sh`): Common utilities for test setup, assertions, and cleanup.
-
-2. **Test Suites**:
-   - `test_basic_ops.sh`: Tests basic file and directory operations
-   - `test_large_file_ops.sh`: Tests operations with larger files and performance
-
-3. **Test Runner** (`run_all_tests.sh`): Script to run all test suites and report results.
-
-4. **Docker Test Script** (`run_tests.sh`): Script to run tests inside the Docker container.
-
-### Key Testing Patterns
-
-1. **Test Setup/Teardown**:
-```bash
-setup() {
-    # Create test directory
-    TEST_DIR=$(setup_test_dir "$TEST_NAME")
-    
-    # Verify the directory was created
-    if [ ! -d "$TEST_DIR" ]; then
-        echo "Error: Failed to create test directory"
-        exit 1
-    fi
-    
-    # Change to the directory
-    cd "$TEST_DIR" || {
-        echo "Error: Failed to change to directory: $TEST_DIR"
-        exit 1
-    }
-}
-
-teardown() {
-    cd /
-    cleanup_test_dir "$TEST_DIR"
-}
-```
-
-2. **Test Function Structure**:
-```bash
-# Test file creation and basic read/write
-test_file_create_read_write() {
-    local TEST_FILE="$TEST_DIR/test_file.txt"
-    local TEST_CONTENT="Hello World from FUSE!"
-    
-    # Create a file with content
-    echo "$TEST_CONTENT" > "$TEST_FILE"
-    
-    # Verify file exists
-    assert_file_exists "$TEST_FILE"
-    
-    # Verify content
-    assert_file_content "$TEST_FILE" "$TEST_CONTENT"
-    
-    return 0
-}
-```
-
-## Fault Injection Design
-
-The fault injector is designed with a clear interface that allows for flexible fault configuration.
-
-### Planned Fault Types
-
-1. **I/O Errors**: Return error codes for operations
-2. **Silent Corruption**: Return success but modify or discard data
-3. **Partial Operations**: Complete only part of a read/write
-4. **Timeouts**: Introduce delays in operations
-5. **Permission Errors**: Simulate permission denied scenarios
-
-### Trigger Conditions
-
-1. **Probability-based**: Trigger with a certain probability
-2. **Operation Count**: Trigger after N operations
-3. **Byte Count**: Trigger after X bytes transferred
-4. **Time-based**: Trigger at specific times or after a duration
-5. **Pattern-based**: Trigger based on operation patterns
-
-### Fault Configuration
-
-Planned configuration interface:
-```c
-// Fault configuration structure
-typedef struct {
-    fault_type_t type;            // Type of fault to inject
-    fault_trigger_t trigger;      // When to trigger the fault
-    
-    // Trigger parameters (e.g., probability, operation count)
-    // Fault parameters (e.g., error code, delay)
-} fault_config_t;
-
-// Configure a fault for a specific operation
-void configure_fault(const char *operation, fault_config_t *config);
-```
-
-## Building and Running
-
-### Building the FUSE Driver
-
-```bash
-./scripts/build-fuse.sh
-```
-
-This script:
-- Starts the Docker container if not running
-- Compiles the FUSE driver inside the container
-- Produces the binary at `src/fuse-driver/nas-emu-fuse`
-
-### Running the FUSE Driver
-
-```bash
-./scripts/run-fuse.sh
-```
-
-This script:
-- Starts the Docker container if not running
-- Mounts the FUSE filesystem at `/mnt/fs-fault` in the container
-- Uses `/var/nas-storage` as the backing storage (configurable)
-
-### Running Tests
-
-```bash
-./scripts/run_tests.sh
-```
-
-This script:
-- Starts the Docker container if not running
-- Builds the FUSE driver if needed
-- Checks if FUSE is mounted, and mounts it if not
-- Runs all functional tests
-- Reports test results
-
-## Networking Considerations
-
-The system is designed to expose SMB services on port 445, but this may conflict with existing services on the host. For development purposes, you can use an alternative port like 1445:
-
-```yaml
-# In docker-compose.yml
-ports:
-  - "1445:445"  # Map container port 445 to host port 1445
-```
-
-This avoids conflicts with any existing SMB services on the host machine.
-
-## Future Enhancements
-
-1. **Fault Configuration System**:
-   - Configuration file format
-   - Runtime configuration API
-   - Dynamic fault adjustment
-
-2. **Advanced Fault Types**:
-   - Data corruption patterns
-   - Selective operation failures
-   - Cascading failures
-   - Recovery testing
-
-3. **Performance Monitoring**:
-   - Operation latency tracking
-   - Throughput measurement
-   - Resource usage monitoring
-
-4. **Integration with Network Layer**:
-   - SMB protocol faults
-   - Network-level disruptions
-   - Protocol-specific failures
-
-5. **Extended Testing**:
-   - Unit tests for fault injection
-   - Stress testing
-   - Benchmarking
-   - Recovery testing

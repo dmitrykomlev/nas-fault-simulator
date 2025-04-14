@@ -14,6 +14,9 @@
 #include "log.h"
 #include "config.h"
 
+// Define our own help key that doesn't conflict with FUSE's constants
+#define NAS_OPT_KEY_HELP -100
+
 // Command line options structure
 struct fs_fault_options {
     char *storage_path;
@@ -49,6 +52,17 @@ static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info 
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for create: %s", path);
     }
+    
+    // First, check access permissions if the file already exists
+    struct stat st;
+    if (fs_op_getattr(path, &st) == 0) {
+        int res = fs_op_access(path, W_OK);
+        if (res != 0) {
+            LOG_DEBUG("Create denied due to permission check: %s", path);
+            return res;
+        }
+    }
+    
     return fs_op_create(path, mode, fi);
 }
 
@@ -67,22 +81,39 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
         LOG_DEBUG("Fault would be triggered for read: %s", path);
     }
     
+    // Check read permission if no file handle
+    if (fi == NULL) {
+        int res = fs_op_access(path, R_OK);
+        if (res != 0) {
+            LOG_DEBUG("Read denied due to permission check: %s", path);
+            return res;
+        }
+    }
+    
     // Update operation statistics
     update_operation_stats("read", size);
     
     return fs_op_read(path, buf, size, offset, fi);
 }
 
-static int fs_fault_write(const char *path, const char *buf, size_t size,
-                         off_t offset, struct fuse_file_info *fi) {
+// In fs_fault_injector.c, the fs_fault_write function needs to be updated to properly check permissions
+
+static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     if (should_trigger_fault("write")) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for write: %s", path);
+        }
+
+        // Always check write permission, regardless of whether we have a file handle
+        int res = fs_op_access(path, W_OK);
+        if (res != 0) {
+        LOG_DEBUG("Write denied due to permission check: %s", path);
+        return res;
     }
-    
+
     // Update operation statistics
     update_operation_stats("write", size);
-    
+
     return fs_op_write(path, buf, size, offset, fi);
 }
 
@@ -91,6 +122,28 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for open: %s", path);
     }
+    
+    // Check permissions based on flags
+    if ((fi->flags & O_ACCMODE) == O_RDONLY) {
+        int res = fs_op_access(path, R_OK);
+        if (res != 0) {
+            LOG_DEBUG("Open denied (read-only) due to permission check: %s", path);
+            return res;
+        }
+    } else if ((fi->flags & O_ACCMODE) == O_WRONLY) {
+        int res = fs_op_access(path, W_OK);
+        if (res != 0) {
+            LOG_DEBUG("Open denied (write-only) due to permission check: %s", path);
+            return res;
+        }
+    } else if ((fi->flags & O_ACCMODE) == O_RDWR) {
+        int res = fs_op_access(path, R_OK | W_OK);
+        if (res != 0) {
+            LOG_DEBUG("Open denied (read-write) due to permission check: %s", path);
+            return res;
+        }
+    }
+    
     return fs_op_open(path, fi);
 }
 
@@ -126,12 +179,35 @@ static int fs_fault_unlink(const char *path) {
     return fs_op_unlink(path);
 }
 
-// Add wrapper functions for the new operations
+static int fs_fault_rename(const char *path, const char *newpath) {
+    if (should_trigger_fault("rename")) {
+        // Will implement fault behavior later
+        LOG_DEBUG("Fault would be triggered for rename: %s to %s", path, newpath);
+    }
+    return fs_op_rename(path, newpath);
+}
+
+static int fs_fault_access(const char *path, int mode) {
+    if (should_trigger_fault("access")) {
+        // Will implement fault behavior later
+        LOG_DEBUG("Fault would be triggered for access: %s, mode: %d", path, mode);
+    }
+    return fs_op_access(path, mode);
+}
+
 static int fs_fault_chmod(const char *path, mode_t mode) {
     if (should_trigger_fault("chmod")) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for chmod: %s", path);
     }
+    
+    // Check write permission
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
+        LOG_DEBUG("Chmod denied due to permission check: %s", path);
+        return res;
+    }
+    
     return fs_op_chmod(path, mode);
 }
 
@@ -140,6 +216,14 @@ static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for chown: %s", path);
     }
+    
+    // Check write permission
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
+        LOG_DEBUG("Chown denied due to permission check: %s", path);
+        return res;
+    }
+    
     return fs_op_chown(path, uid, gid);
 }
 
@@ -148,6 +232,14 @@ static int fs_fault_truncate(const char *path, off_t size) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for truncate: %s", path);
     }
+    
+    // Check write permission
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
+        LOG_DEBUG("Truncate denied due to permission check: %s", path);
+        return res;
+    }
+    
     return fs_op_truncate(path, size);
 }
 
@@ -156,6 +248,14 @@ static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
         // Will implement fault behavior later
         LOG_DEBUG("Fault would be triggered for utimens: %s", path);
     }
+    
+    // Check write permission
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
+        LOG_DEBUG("Utimens denied due to permission check: %s", path);
+        return res;
+    }
+    
     return fs_op_utimens(path, ts);
 }
 
@@ -166,6 +266,7 @@ static struct fuse_operations fs_fault_oper = {
     .mkdir    = fs_fault_mkdir,
     .unlink   = fs_fault_unlink,
     .rmdir    = fs_fault_rmdir,
+    .rename   = fs_fault_rename,
     .open     = fs_fault_open,
     .read     = fs_fault_read,
     .write    = fs_fault_write,
@@ -175,6 +276,7 @@ static struct fuse_operations fs_fault_oper = {
     .chown    = fs_fault_chown,
     .truncate = fs_fault_truncate,
     .utimens  = fs_fault_utimens,
+    .access   = fs_fault_access,
 };
 
 // Helper function to display usage information
@@ -216,7 +318,7 @@ static int fs_fault_opt_proc(void *data, const char *arg, int key, struct fuse_a
             // Ignore other non-option arguments
             return 1;
             
-        case -1: // --help or -h
+        case NAS_OPT_KEY_HELP: // Using our custom help key
             options->show_help = 1;
             return 0;
     }
@@ -230,8 +332,8 @@ static struct fuse_opt fs_fault_opts[] = {
     {"--log=%s", offsetof(struct fs_fault_options, log_file), 0},
     {"--loglevel=%d", offsetof(struct fs_fault_options, log_level), 0},
     {"--config=%s", offsetof(struct fs_fault_options, config_file), 0},
-    {"-h", -1, 0},
-    {"--help", -1, 0},
+    {"-h", NAS_OPT_KEY_HELP, 0}, // Using our custom help key
+    {"--help", NAS_OPT_KEY_HELP, 0}, // Using our custom help key
     FUSE_OPT_END
 };
 

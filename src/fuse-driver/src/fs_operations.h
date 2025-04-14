@@ -36,6 +36,8 @@ int fs_op_chmod(const char *path, mode_t mode);
 int fs_op_chown(const char *path, uid_t uid, gid_t gid);
 int fs_op_truncate(const char *path, off_t size);
 int fs_op_utimens(const char *path, const struct timespec ts[2]);
+int fs_op_rename(const char *path, const char *newpath);
+int fs_op_access(const char *path, int mode);
 
 // Helper functions
 char* get_full_path(const char *path);

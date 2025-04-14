@@ -14,20 +14,19 @@ services:
       - apparmor:unconfined
     volumes:
       - .:/app
-      - fuse-data:/mnt/fs-fault
-      - ${NAS_STORAGE_PATH:-./nas-storage}:/var/nas-storage
+      # Don't pre-mount anything at the FUSE mount point
+      - ${DEV_HOST_STORAGE_PATH:-./nas-storage}:${NAS_STORAGE_PATH:-/var/nas-storage}
+    env_file:
+      - .env
     environment:
-      - STORAGE_PATH=/var/nas-storage
+      - NAS_MOUNT_POINT=${NAS_MOUNT_POINT:-/mnt/nas-mount}
+      - NAS_STORAGE_PATH=${NAS_STORAGE_PATH:-/var/nas-storage}
+      - NAS_LOG_FILE=${NAS_LOG_FILE:-/var/log/nas-emu.log}
+      - NAS_LOG_LEVEL=${NAS_LOG_LEVEL:-2}
     ports:
-      - "1445:445"   # SMB port (for future SMB server)
+      - "${NAS_SMB_PORT:-1445}:445"   # SMB port (for future SMB server)
     command: tail -f /dev/null  # Keep container running
 
-  # Future services will be added here:
-  # backend:
-  #   build: ...
-  #
-  # dashboard:
-  #   build: ...
-
 volumes:
+  # Keep the fuse-data volume for compatibility, but don't use it in the mounts
   fuse-data:

@@ -1,65 +1,60 @@
 #!/bin/bash
+# Script to run all functional tests for the FUSE driver
 
-# Main script to run all functional tests
-
-set -e
-
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m' # No Color
-
+# Source the test helper functions
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
-cd "$SCRIPT_DIR"
+source "${SCRIPT_DIR}/test_helpers.sh"
 
-# Make all test scripts executable
-chmod +x test_*.sh
+# Set the exit code variable
+EXIT_CODE=0
 
-# Store test results
-PASSED_TESTS=0
-FAILED_TESTS=0
-FAILED_TEST_NAMES=()
+# SANITY CHECK: Verify the FUSE driver is running properly
+echo "=================================================="
+echo "FUSE Driver Sanity Check"
+echo "=================================================="
+if ! verify_fuse_driver; then
+    echo -e "${RED}CRITICAL: FUSE driver verification failed${NC}"
+    echo "Cannot proceed with tests as the FUSE driver is not functioning correctly."
+    echo "Please ensure the FUSE driver is properly mounted and running."
+    echo "Try running the './scripts/run-fuse.sh' script first."
+    exit 1
+fi
 
-echo -e "${BOLD}${BLUE}====== NAS Emulator FUSE Driver Functional Tests ======${NC}"
-echo "Started at: $(date)"
-echo
+# Print test suite header
+echo "=================================================="
+echo "Running FUSE Driver Functional Tests"
+echo "=================================================="
+echo "Mount point: ${NAS_MOUNT_POINT}"
+echo "Storage path: ${NAS_STORAGE_PATH}"
+echo "=================================================="
 
-# Run each test script
-for test_script in test_*.sh; do
-    if [ -f "$test_script" ] && [ "$test_script" != "test_helpers.sh" ]; then
-        echo -e "${BOLD}${YELLOW}Running test suite: $test_script${NC}"
-        
-        if ./$test_script; then
-            echo -e "${GREEN}✓ Test suite $test_script passed${NC}"
-            PASSED_TESTS=$((PASSED_TESTS + 1))
-        else
-            echo -e "${RED}✗ Test suite $test_script FAILED${NC}"
-            FAILED_TESTS=$((FAILED_TESTS + 1))
-            FAILED_TEST_NAMES+=("$test_script")
-        fi
-        echo
-    fi
-done
+# Run the basic operations tests
+echo "Running basic operations tests..."
+if bash "${SCRIPT_DIR}/test_basic_ops.sh"; then
+    echo -e "${GREEN}Basic operations tests PASSED${NC}"
+else
+    echo -e "${RED}Basic operations tests FAILED${NC}"
+    EXIT_CODE=1
+fi
+
+# Run the large file operations tests
+echo "Running large file operations tests..."
+if bash "${SCRIPT_DIR}/test_large_file_ops.sh"; then
+    echo -e "${GREEN}Large file operations tests PASSED${NC}"
+else
+    echo -e "${RED}Large file operations tests FAILED${NC}"
+    EXIT_CODE=1
+fi
+
+# Add additional test suites here as they are created
 
 # Print summary
-echo -e "${BOLD}${BLUE}====== Test Summary ======${NC}"
-echo "Total test suites: $((PASSED_TESTS + FAILED_TESTS))"
-echo -e "${GREEN}Passed: $PASSED_TESTS${NC}"
-echo -e "${RED}Failed: $FAILED_TESTS${NC}"
-
-if [ $FAILED_TESTS -gt 0 ]; then
-    echo -e "${RED}Failed test suites:${NC}"
-    for failed in "${FAILED_TEST_NAMES[@]}"; do
-        echo -e "  - $failed"
-    done
-    echo
-    echo -e "${RED}Some tests failed!${NC}"
-    exit 1
+echo "=================================================="
+if [ $EXIT_CODE -eq 0 ]; then
+    echo -e "${GREEN}All tests PASSED${NC}"
 else
-    echo
-    echo -e "${GREEN}All tests passed successfully!${NC}"
-    exit 0
+    echo -e "${RED}Some tests FAILED${NC}"
 fi
+echo "=================================================="
+
+exit $EXIT_CODE

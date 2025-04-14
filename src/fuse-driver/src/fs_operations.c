@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include <utime.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 // Static storage path variable
 static char *storage_path = NULL;
@@ -48,6 +49,43 @@ char* get_full_path(const char *path) {
     return fullpath;
 }
 
+// Helper function to check permissions
+static int check_file_perms(const char *path, int mode) {
+    char *fullpath = get_full_path(path);
+    if (!fullpath) return -ENOMEM;
+    
+    struct stat stbuf;
+    int ret = lstat(fullpath, &stbuf);
+    
+    if (ret == -1) {
+        ret = -errno;
+        free(fullpath);
+        return ret;
+    }
+    
+    // Check owner permissions (we only care about the owner in this simplified model)
+    if ((mode & R_OK) && !(stbuf.st_mode & S_IRUSR)) {
+        LOG_DEBUG("Permission check failed: no read permission for %s", path);
+        free(fullpath);
+        return -EACCES;
+    }
+    
+    if ((mode & W_OK) && !(stbuf.st_mode & S_IWUSR)) {
+        LOG_DEBUG("Permission check failed: no write permission for %s", path);
+        free(fullpath);
+        return -EACCES;
+    }
+    
+    if ((mode & X_OK) && !(stbuf.st_mode & S_IXUSR)) {
+        LOG_DEBUG("Permission check failed: no execute permission for %s", path);
+        free(fullpath);
+        return -EACCES;
+    }
+    
+    free(fullpath);
+    return 0;
+}
+
 // Implementation of filesystem operations
 
 int fs_op_getattr(const char *path, struct stat *stbuf) {
@@ -85,6 +123,13 @@ int fs_op_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
     
     if (!fullpath) return -ENOMEM;
     
+    // Check read permission
+    int perms = check_file_perms(path, R_OK | X_OK);
+    if (perms != 0) {
+        free(fullpath);
+        return perms;
+    }
+    
     dp = opendir(fullpath);
     free(fullpath);
     
@@ -113,12 +158,22 @@ int fs_op_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 int fs_op_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     LOG_DEBUG("create: %s, mode: %o", path, mode);
     
-    int fd;
+    // Check if file exists, and if so, check for write permission
+    struct stat stbuf;
     char *fullpath = get_full_path(path);
-    
     if (!fullpath) return -ENOMEM;
     
-    fd = creat(fullpath, mode);
+    if (lstat(fullpath, &stbuf) == 0) {
+        // File exists, check write permission
+        int perms = check_file_perms(path, W_OK);
+        if (perms != 0) {
+            LOG_DEBUG("create denied: %s already exists and no write permission", path);
+            free(fullpath);
+            return perms;
+        }
+    }
+    
+    int fd = creat(fullpath, mode);
     free(fullpath);
     
     if (fd == -1) {
@@ -138,6 +193,27 @@ int fs_op_mknod(const char *path, mode_t mode, dev_t rdev) {
     char *fullpath = get_full_path(path);
     
     if (!fullpath) return -ENOMEM;
+    
+    // If file exists, check write access to directory
+    char *dirpath = strdup(path);
+    char *last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
+    
+    int perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("mknod denied: no write permission to directory for %s", path);
+        free(fullpath);
+        return perms;
+    }
     
     // If it's a regular file
     if (S_ISREG(mode)) {
@@ -168,6 +244,13 @@ int fs_op_read(const char *path, char *buf, size_t size, off_t offset, struct fu
     int res;
     
     if (fi == NULL) {
+        // No file handle provided, check read permission
+        int perms = check_file_perms(path, R_OK);
+        if (perms != 0) {
+            LOG_DEBUG("read denied: no read permission for %s", path);
+            return perms;
+        }
+        
         char *fullpath = get_full_path(path);
         if (!fullpath) return -ENOMEM;
         
@@ -203,6 +286,13 @@ int fs_op_write(const char *path, const char *buf, size_t size, off_t offset, st
     int res;
     
     if (fi == NULL) {
+        // No file handle provided, check write permission
+        int perms = check_file_perms(path, W_OK);
+        if (perms != 0) {
+            LOG_DEBUG("write denied: no write permission for %s", path);
+            return perms;
+        }
+        
         char *fullpath = get_full_path(path);
         if (!fullpath) return -ENOMEM;
         
@@ -234,17 +324,36 @@ int fs_op_write(const char *path, const char *buf, size_t size, off_t offset, st
 int fs_op_open(const char *path, struct fuse_file_info *fi) {
     LOG_DEBUG("open: %s, flags: 0x%x", path, fi->flags);
     
-    int fd;
-    char *fullpath = get_full_path(path);
+    // Check permissions based on requested flags
+    if ((fi->flags & O_ACCMODE) == O_RDONLY) {
+        int perms = check_file_perms(path, R_OK);
+        if (perms != 0) {
+            LOG_DEBUG("open denied: no read permission for %s", path);
+            return perms;
+        }
+    } else if ((fi->flags & O_ACCMODE) == O_WRONLY) {
+        int perms = check_file_perms(path, W_OK);
+        if (perms != 0) {
+            LOG_DEBUG("open denied: no write permission for %s", path);
+            return perms;
+        }
+    } else if ((fi->flags & O_ACCMODE) == O_RDWR) {
+        int perms = check_file_perms(path, R_OK | W_OK);
+        if (perms != 0) {
+            LOG_DEBUG("open denied: no read/write permission for %s", path);
+            return perms;
+        }
+    }
     
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    fd = open(fullpath, fi->flags);
+    int fd = open(fullpath, fi->flags);
     free(fullpath);
     
     if (fd == -1) {
         int err = -errno;
-        LOG_DEBUG("open failed: %s, error: %s", path, strerror(errno));
+        LOG_DEBUG("open failed: %s, flags: 0x%x, error: %s", path, fi->flags, strerror(errno));
         return err;
     }
     
@@ -267,12 +376,30 @@ int fs_op_release(const char *path, struct fuse_file_info *fi) {
 int fs_op_mkdir(const char *path, mode_t mode) {
     LOG_DEBUG("mkdir: %s, mode: %o", path, mode);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission on parent directory
+    char *dirpath = strdup(path);
+    char *last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
     
+    int perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("mkdir denied: no write permission to parent directory for %s", path);
+        return perms;
+    }
+    
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = mkdir(fullpath, mode);
+    int res = mkdir(fullpath, mode);
     free(fullpath);
     
     if (res == -1) {
@@ -287,12 +414,30 @@ int fs_op_mkdir(const char *path, mode_t mode) {
 int fs_op_rmdir(const char *path) {
     LOG_DEBUG("rmdir: %s", path);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission on parent directory
+    char *dirpath = strdup(path);
+    char *last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
     
+    int perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("rmdir denied: no write permission to parent directory for %s", path);
+        return perms;
+    }
+    
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = rmdir(fullpath);
+    int res = rmdir(fullpath);
     free(fullpath);
     
     if (res == -1) {
@@ -307,12 +452,30 @@ int fs_op_rmdir(const char *path) {
 int fs_op_unlink(const char *path) {
     LOG_DEBUG("unlink: %s", path);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission on parent directory
+    char *dirpath = strdup(path);
+    char *last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
     
+    int perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("unlink denied: no write permission to parent directory for %s", path);
+        return perms;
+    }
+    
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = unlink(fullpath);
+    int res = unlink(fullpath);
     free(fullpath);
     
     if (res == -1) {
@@ -327,12 +490,17 @@ int fs_op_unlink(const char *path) {
 int fs_op_chmod(const char *path, mode_t mode) {
     LOG_DEBUG("chmod: %s, mode: %o", path, mode);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission to the file
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("chmod denied: no write permission for %s", path);
+        return perms;
+    }
     
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = chmod(fullpath, mode);
+    int res = chmod(fullpath, mode);
     free(fullpath);
     
     if (res == -1) {
@@ -347,12 +515,17 @@ int fs_op_chmod(const char *path, mode_t mode) {
 int fs_op_chown(const char *path, uid_t uid, gid_t gid) {
     LOG_DEBUG("chown: %s, uid: %d, gid: %d", path, uid, gid);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission to the file
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("chown denied: no write permission for %s", path);
+        return perms;
+    }
     
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = chown(fullpath, uid, gid);
+    int res = chown(fullpath, uid, gid);
     free(fullpath);
     
     if (res == -1) {
@@ -367,12 +540,17 @@ int fs_op_chown(const char *path, uid_t uid, gid_t gid) {
 int fs_op_truncate(const char *path, off_t size) {
     LOG_DEBUG("truncate: %s, size: %ld", path, size);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("truncate denied: no write permission for %s", path);
+        return perms;
+    }
     
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
-    res = truncate(fullpath, size);
+    int res = truncate(fullpath, size);
     free(fullpath);
     
     if (res == -1) {
@@ -387,9 +565,14 @@ int fs_op_truncate(const char *path, off_t size) {
 int fs_op_utimens(const char *path, const struct timespec ts[2]) {
     LOG_DEBUG("utimens: %s", path);
     
-    int res;
-    char *fullpath = get_full_path(path);
+    // Check write permission
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("utimens denied: no write permission for %s", path);
+        return perms;
+    }
     
+    char *fullpath = get_full_path(path);
     if (!fullpath) return -ENOMEM;
     
     // FUSE passes timestamps in ts[0] (access) and ts[1] (modification)
@@ -400,7 +583,7 @@ int fs_op_utimens(const char *path, const struct timespec ts[2]) {
     tv[1].tv_sec = ts[1].tv_sec;
     tv[1].tv_usec = ts[1].tv_nsec / 1000;
     
-    res = utimes(fullpath, tv);
+    int res = utimes(fullpath, tv);
     
     free(fullpath);
     
@@ -411,4 +594,95 @@ int fs_op_utimens(const char *path, const struct timespec ts[2]) {
     }
     
     return 0;
+}
+
+int fs_op_rename(const char *path, const char *newpath) {
+    LOG_DEBUG("rename: %s to %s", path, newpath);
+    
+    // Check write permission on both files if they exist
+    // and on both parent directories
+    
+    // Source file permissions
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("rename denied: no write permission for source %s", path);
+        return perms;
+    }
+    
+    // Source directory permissions
+    char *dirpath = strdup(path);
+    char *last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
+    
+    perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("rename denied: no write permission to source directory for %s", path);
+        return perms;
+    }
+    
+    // Destination directory permissions
+    dirpath = strdup(newpath);
+    last_slash = strrchr(dirpath, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        if (*dirpath == '\0') {
+            strcpy(dirpath, "/");
+        }
+    } else {
+        strcpy(dirpath, "/");
+    }
+    
+    perms = check_file_perms(dirpath, W_OK);
+    free(dirpath);
+    
+    if (perms != 0) {
+        LOG_DEBUG("rename denied: no write permission to destination directory for %s", newpath);
+        return perms;
+    }
+    
+    // If destination file exists, check write permission
+    struct stat stbuf;
+    if (fs_op_getattr(newpath, &stbuf) == 0) {
+        perms = check_file_perms(newpath, W_OK);
+        if (perms != 0) {
+            LOG_DEBUG("rename denied: no write permission for destination %s", newpath);
+            return perms;
+        }
+    }
+    
+    char *fullpath = get_full_path(path);
+    if (!fullpath) return -ENOMEM;
+    
+    char *fullnewpath = get_full_path(newpath);
+    if (!fullnewpath) {
+        free(fullpath);
+        return -ENOMEM;
+    }
+    
+    int res = rename(fullpath, fullnewpath);
+    
+    free(fullpath);
+    free(fullnewpath);
+    
+    if (res == -1) {
+        res = -errno;
+        LOG_DEBUG("rename failed: %s to %s, error: %s", path, newpath, strerror(errno));
+    }
+    
+    return res;
+}
+
+int fs_op_access(const char *path, int mode) {
+    LOG_DEBUG("access: %s, mode: %d", path, mode);
+    
+    return check_file_perms(path, mode);
 }
