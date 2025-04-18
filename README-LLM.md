@@ -153,8 +153,15 @@ The project is organized with the following structure:
   - [x] Large file operations tests
 - [x] Docker development environment
 - [x] Persistent storage with host volume mapping
+- [x] Fault injection logic implementation
+  - [x] Error injection (return error codes)
+  - [x] Data corruption (corrupt write operations)
+  - [x] Operation delays (add latency)
+  - [x] Partial operations (incomplete read/write)
+  - [x] Timing-based faults
+  - [x] Operation count faults
+- [x] Config-based fault configuration with section format
 - [ ] Unit testing for fault conditions
-- [ ] Fault injection logic implementation (stubs are in place)
 - [ ] Performance monitoring 
 - [ ] API for external control
 
@@ -277,17 +284,18 @@ The testing framework includes:
 
 ## Next Steps
 
-1. Implement fault injection logic:
-   - Complete the fault configuration mechanism
-   - Implement specific fault behaviors
-   - Define triggering conditions
-   - Add fault probability controls
-
-2. Create unit tests for fault scenarios:
+1. Create unit tests for fault injection:
    - Silent data corruption tests
    - Timing-based failure tests
    - Operation-count failure tests
-   - Permission-based failure tests
+   - Partial operation tests
+   - Delay tests
+
+2. Enhance fault configuration mechanism:
+   - Add runtime API to configure faults
+   - Allow dynamic fault probability adjustment
+   - Add more complex fault trigger conditions
+   - Create fault profile presets
 
 3. Develop SMB layer:
    - Integrate Samba server with FUSE

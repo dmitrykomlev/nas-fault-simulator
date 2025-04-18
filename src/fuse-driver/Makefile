@@ -6,7 +6,7 @@ LDFLAGS=`pkg-config fuse --libs` -lpthread
 TARGET=nas-emu-fuse
 
 # Source files
-SRC=src/fs_fault_injector.c src/fs_operations.c src/fault_injector.c src/log.c src/config.c
+SRC=src/fs_fault_injector.c src/fs_operations.c src/fault_injector.c src/log.c src/config.c src/fs_common.c
 
 # Object files directory
 OBJ_DIR=obj

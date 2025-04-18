@@ -67,7 +67,8 @@ docker-compose exec -d fuse-dev /app/src/fuse-driver/nas-emu-fuse \
     "${NAS_MOUNT_POINT}" \
     --storage="${NAS_STORAGE_PATH}" \
     --log="${NAS_LOG_FILE}" \
-    --loglevel="${NAS_LOG_LEVEL}"
+    --loglevel="${NAS_LOG_LEVEL}" \
+    --config="/app/src/fuse-driver/nas-emu-fuse.conf"
 
 # Wait a moment for the filesystem to mount
 sleep 2

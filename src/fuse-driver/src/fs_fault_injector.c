@@ -31,27 +31,61 @@ static fs_config_t *config;
 
 // Wrapper functions that can inject faults
 static int fs_fault_getattr(const char *path, struct stat *stbuf) {
-    if (should_trigger_fault("getattr")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for getattr: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_GETATTR);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_GETATTR, &error_code))) {
+        LOG_INFO("Error fault active for getattr: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_GETATTR);
+    
+    // Perform the actual operation
     return fs_op_getattr(path, stbuf);
 }
 
 static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                            off_t offset, struct fuse_file_info *fi) {
-    if (should_trigger_fault("readdir")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for readdir: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_READDIR);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_READDIR, &error_code))) {
+        LOG_INFO("Error fault active for readdir: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_READDIR);
+    
+    // Perform the actual operation
     return fs_op_readdir(path, buf, filler, offset, fi);
 }
 
 static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
-    if (should_trigger_fault("create")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for create: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_CREATE);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_CREATE, &error_code))) {
+        LOG_INFO("Error fault active for create: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_CREATE);
     
     // First, check access permissions if the file already exists
     struct stat st;
@@ -67,19 +101,40 @@ static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info 
 }
 
 static int fs_fault_mknod(const char *path, mode_t mode, dev_t rdev) {
-    if (should_trigger_fault("mknod")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for mknod: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_MKNOD);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_MKNOD, &error_code))) {
+        LOG_INFO("Error fault active for mknod: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_MKNOD);
+    
     return fs_op_mknod(path, mode, rdev);
 }
 
 static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
                         struct fuse_file_info *fi) {
-    if (should_trigger_fault("read")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for read: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_READ);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_READ, &error_code))) {
+        LOG_INFO("Error fault active for read: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_READ);
     
     // Check read permission if no file handle
     if (fi == NULL) {
@@ -90,38 +145,107 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
         }
     }
     
-    // Update operation statistics
-    update_operation_stats("read", size);
+    // 3. Apply partial operation fault if applicable
+    size_t adjusted_size = apply_partial_fault(FS_OP_READ, size);
     
-    return fs_op_read(path, buf, size, offset, fi);
+    // 4. Perform the actual operation
+    int res = fs_op_read(path, buf, adjusted_size, offset, fi);
+    
+    // Update stats and return
+    if (res > 0) {
+        update_operation_stats(FS_OP_READ, res);
+    }
+    return res;
 }
 
 // In fs_fault_injector.c, the fs_fault_write function needs to be updated to properly check permissions
 
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    if (should_trigger_fault("write")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for write: %s", path);
-        }
-
-        // Always check write permission, regardless of whether we have a file handle
-        int res = fs_op_access(path, W_OK);
-        if (res != 0) {
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_WRITE);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_WRITE, &error_code))) {
+        LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
+        return error_code;
+    }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_WRITE);
+    
+    // Always check write permission, regardless of whether we have a file handle
+    int res = fs_op_access(path, W_OK);
+    if (res != 0) {
         LOG_DEBUG("Write denied due to permission check: %s", path);
         return res;
     }
-
-    // Update operation statistics
-    update_operation_stats("write", size);
-
-    return fs_op_write(path, buf, size, offset, fi);
+    
+    // 3. Apply partial operation fault if applicable
+    size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    
+    // 4. Handle corruption (create a local copy of the buffer and corrupt it)
+    char *corrupted_buf = NULL;
+    fs_config_t *config = config_get_global();
+    
+    if (should_fault || (config->corruption_fault && 
+                        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) && 
+                        check_probability(config->corruption_fault->probability))) {
+            
+        // Create a copy of the buffer that we can corrupt
+        corrupted_buf = malloc(adjusted_size);
+        if (corrupted_buf) {
+            memcpy(corrupted_buf, buf, adjusted_size);
+            
+            // Apply corruption to the buffer
+            size_t corrupt_bytes = (size_t)(adjusted_size * config->corruption_fault->percentage / 100.0);
+            if (corrupt_bytes == 0 && config->corruption_fault->percentage > 0) {
+                corrupt_bytes = 1;
+            }
+            
+            LOG_INFO("Corruption fault injected for write: corrupting %zu of %zu bytes (%.1f%%)",
+                    corrupt_bytes, adjusted_size, config->corruption_fault->percentage);
+            
+            // Corrupt random bytes in the buffer
+            for (size_t i = 0; i < corrupt_bytes; i++) {
+                size_t pos = rand() % adjusted_size;
+                corrupted_buf[pos] = (char)(rand() % 256);  // Replace with random byte
+            }
+        }
+    }
+    
+    // 5. Perform the actual operation with either the original or corrupted buffer
+    res = fs_op_write(path, corrupted_buf ? corrupted_buf : buf, adjusted_size, offset, fi);
+    
+    // Free our corrupted buffer if we created one
+    if (corrupted_buf) {
+        free(corrupted_buf);
+    }
+    
+    // Update stats and return
+    if (res > 0) {
+        update_operation_stats(FS_OP_WRITE, res);
+    }
+    return res;
 }
 
 static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
-    if (should_trigger_fault("open")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for open: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_OPEN);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_OPEN, &error_code))) {
+        LOG_INFO("Error fault active for open: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_OPEN);
     
     // Check permissions based on flags
     if ((fi->flags & O_ACCMODE) == O_RDONLY) {
@@ -148,58 +272,134 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
 }
 
 static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
-    if (should_trigger_fault("release")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for release: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_RELEASE);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_RELEASE, &error_code))) {
+        LOG_INFO("Error fault active for release: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_RELEASE);
+    
     return fs_op_release(path, fi);
 }
 
 static int fs_fault_mkdir(const char *path, mode_t mode) {
-    if (should_trigger_fault("mkdir")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for mkdir: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_MKDIR);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_MKDIR, &error_code))) {
+        LOG_INFO("Error fault active for mkdir: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_MKDIR);
+    
     return fs_op_mkdir(path, mode);
 }
 
 static int fs_fault_rmdir(const char *path) {
-    if (should_trigger_fault("rmdir")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for rmdir: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_RMDIR);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_RMDIR, &error_code))) {
+        LOG_INFO("Error fault active for rmdir: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_RMDIR);
+    
     return fs_op_rmdir(path);
 }
 
 static int fs_fault_unlink(const char *path) {
-    if (should_trigger_fault("unlink")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for unlink: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_UNLINK);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_UNLINK, &error_code))) {
+        LOG_INFO("Error fault active for unlink: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_UNLINK);
+    
     return fs_op_unlink(path);
 }
 
 static int fs_fault_rename(const char *path, const char *newpath) {
-    if (should_trigger_fault("rename")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for rename: %s to %s", path, newpath);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_RENAME);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_RENAME, &error_code))) {
+        LOG_INFO("Error fault active for rename: %s to %s, returning error %d", path, newpath, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_RENAME);
+    
     return fs_op_rename(path, newpath);
 }
 
 static int fs_fault_access(const char *path, int mode) {
-    if (should_trigger_fault("access")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for access: %s, mode: %d", path, mode);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_ACCESS);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_ACCESS, &error_code))) {
+        LOG_INFO("Error fault active for access: %s, mode: %d, returning error %d", path, mode, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_ACCESS);
+    
     return fs_op_access(path, mode);
 }
 
 static int fs_fault_chmod(const char *path, mode_t mode) {
-    if (should_trigger_fault("chmod")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for chmod: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_CHMOD);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_CHMOD, &error_code))) {
+        LOG_INFO("Error fault active for chmod: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_CHMOD);
     
     // Check write permission
     int res = fs_op_access(path, W_OK);
@@ -212,10 +412,20 @@ static int fs_fault_chmod(const char *path, mode_t mode) {
 }
 
 static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
-    if (should_trigger_fault("chown")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for chown: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_CHOWN);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_CHOWN, &error_code))) {
+        LOG_INFO("Error fault active for chown: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_CHOWN);
     
     // Check write permission
     int res = fs_op_access(path, W_OK);
@@ -228,10 +438,20 @@ static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
 }
 
 static int fs_fault_truncate(const char *path, off_t size) {
-    if (should_trigger_fault("truncate")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for truncate: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_TRUNCATE);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_TRUNCATE, &error_code))) {
+        LOG_INFO("Error fault active for truncate: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_TRUNCATE);
     
     // Check write permission
     int res = fs_op_access(path, W_OK);
@@ -244,10 +464,20 @@ static int fs_fault_truncate(const char *path, off_t size) {
 }
 
 static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
-    if (should_trigger_fault("utimens")) {
-        // Will implement fault behavior later
-        LOG_DEBUG("Fault would be triggered for utimens: %s", path);
+    // First check if any timing or operation count conditions would trigger a fault
+    bool should_fault = should_trigger_fault(FS_OP_UTIMENS);
+    
+    // Try each fault type in order of precedence
+    
+    // 1. Try error fault (highest precedence - returns error to caller)
+    int error_code = -EIO;
+    if ((should_fault || apply_error_fault(FS_OP_UTIMENS, &error_code))) {
+        LOG_INFO("Error fault active for utimens: %s, returning error %d", path, error_code);
+        return error_code;
     }
+    
+    // 2. Apply delay fault if applicable
+    apply_delay_fault(FS_OP_UTIMENS);
     
     // Check write permission
     int res = fs_op_access(path, W_OK);
