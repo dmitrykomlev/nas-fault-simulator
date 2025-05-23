@@ -161,8 +161,13 @@ The project is organized with the following structure:
   - [x] Timing-based faults
   - [x] Operation count faults
 - [x] Config-based fault configuration with section format
-- [ ] Unit testing for fault conditions
-- [ ] Performance monitoring 
+- [ ] Fault injection testing
+  - [ ] Corruption fault tests
+  - [ ] Error injection tests
+  - [ ] Delay and timing-based fault tests
+  - [ ] Partial operation fault tests
+  - [ ] Operation count fault tests
+- [ ] Performance monitoring
 - [ ] API for external control
 
 ### Network Layer (SMB)

@@ -23,9 +23,13 @@ services:
       - NAS_STORAGE_PATH=${NAS_STORAGE_PATH:-/var/nas-storage}
       - NAS_LOG_FILE=${NAS_LOG_FILE:-/var/log/nas-emu.log}
       - NAS_LOG_LEVEL=${NAS_LOG_LEVEL:-2}
+      - SMB_SHARE_NAME=${SMB_SHARE_NAME:-nasshare}
+      - SMB_USERNAME=${SMB_USERNAME:-nasusr}
+      - SMB_PASSWORD=${SMB_PASSWORD:-naspass}
     ports:
-      - "${NAS_SMB_PORT:-1445}:445"   # SMB port (for future SMB server)
-    command: tail -f /dev/null  # Keep container running
+      - "${NAS_SMB_PORT:-1445}:445"   # SMB port for Samba server
+    # Use the startup script to launch services
+    command: /start-services.sh
 
 volumes:
   # Keep the fuse-data volume for compatibility, but don't use it in the mounts

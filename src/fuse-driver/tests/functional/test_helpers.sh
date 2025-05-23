@@ -2,10 +2,17 @@
 # test_helpers.sh - Common test helper functions
 
 # Source the central configuration
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+# Handle different readlink implementations (macOS vs Linux)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS doesn't have readlink -f
+    SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+else
+    # Linux
+    SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+fi
 
 # First go to the functional tests dir, then up to tests, then up to fuse-driver, then up to src, then up to project root
-PROJECT_ROOT=$(dirname $(dirname $(dirname $(dirname "$SCRIPT_DIR"))))
+PROJECT_ROOT=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
 source "${PROJECT_ROOT}/scripts/config.sh"
 
 # Colors for test output
@@ -126,7 +133,8 @@ run_test() {
 # Setup test directory
 setup_test_dir() {
     local TEST_NAME=$1
-    local TEST_DIR="${NAS_MOUNT_POINT}/test_${TEST_NAME}_$(date +%s)"
+    # Use a temporary directory within the project root instead of NAS_MOUNT_POINT
+    local TEST_DIR="${PROJECT_ROOT}/tmp_test_${TEST_NAME}_$(date +%s)"
     mkdir -p "$TEST_DIR"
     echo "$TEST_DIR"
 }

@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y \
     valgrind \
     libcunit1 libcunit1-dev \
     clang-format \
+    # Samba packages
+    samba \
+    smbclient \
     && rm -rf /var/lib/apt/lists/*
 
 # Create working directory
@@ -20,7 +23,10 @@ WORKDIR /app
 ENV NAS_MOUNT_POINT=/mnt/nas-mount \
     NAS_STORAGE_PATH=/var/nas-storage \
     NAS_LOG_FILE=/var/log/nas-emu.log \
-    NAS_LOG_LEVEL=2
+    NAS_LOG_LEVEL=2 \
+    SMB_SHARE_NAME=nasshare \
+    SMB_USERNAME=nasusr \
+    SMB_PASSWORD=naspass
 
 # Create necessary directories
 RUN mkdir -p ${NAS_MOUNT_POINT} && \
@@ -29,8 +35,19 @@ RUN mkdir -p ${NAS_MOUNT_POINT} && \
     # Create directories for build
     mkdir -p /app/src/fuse-driver/obj
 
+# Create Samba user
+RUN useradd -m ${SMB_USERNAME} && \
+    (echo ${SMB_PASSWORD}; echo ${SMB_PASSWORD}) | smbpasswd -a ${SMB_USERNAME}
+
+# Copy Samba config
+COPY src/fuse-driver/docker/smb.conf /etc/samba/smb.conf
+
+# Copy startup script
+COPY src/fuse-driver/docker/start-services.sh /start-services.sh
+RUN chmod +x /start-services.sh
+
 # Mount point for source code volume
 VOLUME ["/app"]
 
-# Default command starts a shell
-CMD ["/bin/bash"]
+# Start services
+CMD ["/start-services.sh"]
