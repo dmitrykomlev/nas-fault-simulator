@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./test_debug_framework.sh:*)",
+      "Bash(docker exec:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}

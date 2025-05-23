@@ -1,0 +1,48 @@
+FROM ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    fuse \
+    samba \
+    smbclient \
+    gettext-base \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory
+WORKDIR /app
+
+# Set environment variables with default values
+ENV NAS_MOUNT_POINT=/mnt/nas-mount \
+    NAS_STORAGE_PATH=/var/nas-storage \
+    NAS_LOG_FILE=/var/log/nas-emu.log \
+    NAS_LOG_LEVEL=2 \
+    SMB_SHARE_NAME=nasshare \
+    SMB_USERNAME=nasusr \
+    SMB_PASSWORD=naspass \
+    USE_HOST_STORAGE=false \
+    CONFIG_FILE=""
+
+# Create necessary directories and SMB user
+RUN mkdir -p ${NAS_MOUNT_POINT} && \
+    mkdir -p ${NAS_STORAGE_PATH} && \
+    mkdir -p $(dirname ${NAS_LOG_FILE}) && \
+    mkdir -p /var/log/samba && \
+    mkdir -p /configs && \
+    useradd -m ${SMB_USERNAME}
+
+# Copy SMB configuration template
+COPY src/fuse-driver/docker/smb.conf /etc/samba/smb.conf.template
+
+# Copy configuration files instead of mounting
+COPY src/fuse-driver/tests/configs/ /configs/
+
+# Copy only the built FUSE binary (built by build container)
+COPY src/fuse-driver/nas-emu-fuse /usr/local/bin/nas-emu-fuse
+RUN chmod +x /usr/local/bin/nas-emu-fuse
+
+# Copy and setup entrypoint script
+COPY src/fuse-driver/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Use entrypoint to configure and run all services  
+ENTRYPOINT ["/entrypoint.sh"]

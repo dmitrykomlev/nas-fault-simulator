@@ -326,3 +326,62 @@ The priority order is:
 3. Environment variables from `.env`
 4. Configuration file values
 5. Hardcoded defaults (lowest)
+
+## Critical Configuration Parsing Issues
+
+### Timing Fault Default Behavior (IMPORTANT)
+
+**WARNING**: The timing fault has dangerous default behavior that can cause test failures and system hangs.
+
+**Problem**: When a config file contains a `[timing_fault]` section, the parser automatically enables timing faults with these defaults:
+- `enabled = true` (ALWAYS enabled when section exists)
+- `after_minutes = 5` (triggers after 5 minutes)
+- `operations_mask = 0xFFFFFFFF` (affects ALL filesystem operations)
+
+**Effect**: After 5 minutes of operation, ALL filesystem operations start failing with I/O errors (-5), making the filesystem completely inaccessible.
+
+**Root Cause**: In `config.c` lines 152-158, the parser sets `enabled = true` as the default when creating the timing fault structure, regardless of what the config file specifies.
+
+**Correct Configuration**:
+```ini
+[timing_fault]
+enabled = false       # Must use 'enabled', not 'probability'
+after_minutes = 5
+operations = all
+```
+
+**Wrong Configuration** (will cause hangs):
+```ini
+[timing_fault] 
+probability = 0.0     # IGNORED! Parser doesn't recognize 'probability' for timing faults
+```
+
+### Configuration Key Mismatch Issues
+
+Different fault types use different configuration keys:
+
+**Timing Faults** use:
+- `enabled` (boolean) - NOT `probability`
+- `after_minutes` (integer)
+- `operations` (string)
+
+**Other Faults** (corruption, error, delay) use:
+- `probability` (float 0.0-1.0)
+- Various type-specific parameters
+- `operations` (string)
+
+**Debugging Tips**:
+1. Check logs for "Timing fault: [operation] triggered after X.X minutes" 
+2. If filesystem becomes unresponsive after ~5 minutes, timing faults are likely enabled
+3. Verify config uses correct key names for each fault type
+4. Remember: section existence alone can enable timing faults with defaults
+
+### Config Parser Behavior
+
+The parser creates fault structures when it encounters section headers `[fault_type]`, and sets potentially dangerous defaults before parsing the section contents. This means:
+
+1. **Empty sections enable faults**: Just having `[timing_fault]` enables timing faults
+2. **Wrong keys are ignored**: Using `probability` instead of `enabled` leaves defaults active
+3. **Silent failures**: No warnings when config keys are unrecognized
+
+This behavior affects production testing and can cause unexpected test failures or system hangs.

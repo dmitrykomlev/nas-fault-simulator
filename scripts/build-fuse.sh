@@ -7,34 +7,30 @@ set -e
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 source "${SCRIPT_DIR}/config.sh"
 
-# Check if Docker container is running
-if ! docker-compose ps | grep -q "fuse-dev.*Up"; then
-    echo "Starting Docker container..."
-    docker-compose up -d
-fi
-
-# Build the FUSE driver
-echo "Building FUSE driver..."
-docker-compose exec fuse-dev bash -c "cd /app/src/fuse-driver && make clean && make VERBOSE=1" || {
+# Use separate build container for building
+echo "Building FUSE driver using build container..."
+cd "${PROJECT_ROOT}"
+docker compose -f docker-compose.build.yml build fuse-builder
+docker compose -f docker-compose.build.yml run --rm fuse-builder || {
     echo "ERROR: FUSE driver build command failed!"
     echo "Checking for common issues..."
     
     # Check if source files exist
-    docker-compose exec fuse-dev bash -c "ls -la /app/src/fuse-driver/src/"
+    echo "Checking source files..."
+    ls -la src/fuse-driver/src/
     
-    # Check pkg-config fuse
-    echo "Checking FUSE development package..."
-    docker-compose exec fuse-dev bash -c "pkg-config --cflags --libs fuse || echo 'FUSE development package not properly installed'"
+    # Check if we have build dependencies
+    echo "Build failed. Try running: sudo apt-get install build-essential libfuse-dev pkg-config"
     
     # Check obj directory permissions
     echo "Checking obj directory permissions..."
-    docker-compose exec fuse-dev bash -c "mkdir -p /app/src/fuse-driver/obj && ls -la /app/src/fuse-driver/"
+    mkdir -p src/fuse-driver/obj && ls -la src/fuse-driver/
     
     exit 1
 }
 
 # Verify the build
-if docker-compose exec fuse-dev test -f /app/src/fuse-driver/nas-emu-fuse; then
+if [ -f ./src/fuse-driver/nas-emu-fuse ]; then
     echo "FUSE driver built successfully!"
 else
     echo "ERROR: Failed to build FUSE driver binary!"

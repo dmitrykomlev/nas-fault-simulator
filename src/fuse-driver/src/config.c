@@ -139,7 +139,8 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
                 if (config->corruption_fault) {
                     config->corruption_fault->probability = 0.5;
                     config->corruption_fault->percentage = 10.0;
-                    config->corruption_fault->operations_mask = (1 << FS_OP_READ) | (1 << FS_OP_WRITE);  // Default: read/write only
+                    config->corruption_fault->silent = true;
+                    config->corruption_fault->operations_mask = (1 << FS_OP_WRITE);  // Default: write only (safer)
                 }
             } else if (strcmp(current_section, "delay_fault") == 0 && !config->delay_fault) {
                 config->delay_fault = calloc(1, sizeof(fault_delay_t));
@@ -151,14 +152,14 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
             } else if (strcmp(current_section, "timing_fault") == 0 && !config->timing_fault) {
                 config->timing_fault = calloc(1, sizeof(fault_timing_t));
                 if (config->timing_fault) {
-                    config->timing_fault->enabled = true;
+                    config->timing_fault->enabled = false;  // Default: disabled for safety
                     config->timing_fault->after_minutes = 5;
                     config->timing_fault->operations_mask = 0xFFFFFFFF;  // Default: all operations
                 }
             } else if (strcmp(current_section, "operation_count_fault") == 0 && !config->operation_count_fault) {
                 config->operation_count_fault = calloc(1, sizeof(fault_operation_count_t));
                 if (config->operation_count_fault) {
-                    config->operation_count_fault->enabled = true;
+                    config->operation_count_fault->enabled = false;  // Default: disabled for safety
                     config->operation_count_fault->every_n_operations = 10;
                     config->operation_count_fault->after_bytes = 1024 * 1024; // 1MB
                     config->operation_count_fault->operations_mask = 0xFFFFFFFF;  // Default: all operations
@@ -190,6 +191,17 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
             char *end = k + strlen(k) - 1;
             while (end > k && *end == ' ') {
                 *end-- = '\0';
+            }
+            
+            // Strip comments from value (everything after #)
+            char *comment = strchr(v, '#');
+            if (comment) {
+                *comment = '\0';  // Terminate string at comment
+                // Remove trailing whitespace after stripping comment
+                end = v + strlen(v) - 1;
+                while (end >= v && (*end == ' ' || *end == '\t')) {
+                    *end-- = '\0';
+                }
             }
             
             // Process global configuration

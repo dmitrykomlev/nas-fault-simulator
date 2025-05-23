@@ -256,22 +256,32 @@ Key sections:
 ```c
 // Wrapper functions that can inject faults
 static int fs_fault_getattr(const char *path, struct stat *stbuf) {
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_GETATTR);
+    // === PRIORITY-BASED FAULT CHECKING ===
+    // Each fault is checked independently in strict priority order
     
-    // Try each fault type in order of precedence
-    
-    // 1. Try error fault (highest precedence - returns error to caller)
+    // 1. ERROR FAULTS (Highest Priority) - Operation fails immediately
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_GETATTR, &error_code))) {
-        LOG_INFO("Error fault active for getattr: %s, returning error %d", path, error_code);
+    if (apply_error_fault(FS_OP_GETATTR, &error_code)) {
+        LOG_INFO("Error fault triggered for getattr: %s, returning error %d", path, error_code);
         return error_code;
     }
     
-    // 2. Apply delay fault if applicable
+    // 2. TIMING FAULTS - Operation fails due to time conditions
+    if (check_timing_fault(FS_OP_GETATTR)) {
+        LOG_INFO("Timing fault triggered for getattr: %s, returning I/O error", path);
+        return -EIO;
+    }
+    
+    // 3. OPERATION COUNT FAULTS - Operation fails due to count conditions
+    if (check_operation_count_fault(FS_OP_GETATTR)) {
+        LOG_INFO("Operation count fault triggered for getattr: %s, returning I/O error", path);
+        return -EIO;
+    }
+    
+    // 4. DELAY FAULTS - Add latency but operation continues
     apply_delay_fault(FS_OP_GETATTR);
     
-    // Perform the actual operation
+    // 5. Perform the actual operation
     return fs_op_getattr(path, stbuf);
 }
 
@@ -291,86 +301,114 @@ int main(int argc, char *argv[]) {
 }
 ```
 
-### Fault Injection Implementation
+### Fault Injection Implementation - Priority-Based Design
 
-The fault injection implementation applies different types of faults with a clear order of precedence:
+**IMPORTANT**: The fault injection system uses a **priority-based independent design** where each fault type is checked separately in strict priority order. The first fault that triggers determines the operation outcome.
 
-1. Error faults (return error codes)
-2. Delay faults (add latency to operations)
-3. Partial operation faults (for read/write operations - process only a portion of data)
-4. Data corruption faults (for write operations - silently corrupt data before writing)
+#### Fault Priority Order:
+
+1. **Error Faults** (Highest Priority) - Operation fails immediately with error code
+2. **Timing Faults** - Operation fails after time threshold  
+3. **Operation Count Faults** - Operation fails based on count/bytes processed
+4. **Permission Check** - Always validate permissions
+5. **Delay Faults** - Operation continues but with added latency
+6. **Partial Faults** - Operation succeeds but with reduced data size
+7. **Corruption Faults** (Lowest Priority) - Operation succeeds but data is corrupted
+
+#### Key Design Principles:
+
+- **Independent Fault Types**: Each fault is configured and triggered independently
+- **No Cross-Dependencies**: Timing faults don't trigger corruption faults
+- **Predictable Behavior**: Users know exactly which fault takes precedence
+- **Single Probability Check**: Each fault type checks probability only once
+- **Clear Documentation**: Priority order is explicit and documented
 
 Each operation decides which faults can be applied to it. For example, write operations have the most comprehensive fault model:
 
 ```c
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_WRITE);
+    fs_config_t *config = config_get_global();
     
-    // Try each fault type in order of precedence
+    if (!config->enable_fault_injection) {
+        return fs_op_write(path, buf, size, offset, fi);
+    }
     
-    // 1. Try error fault (highest precedence - returns error to caller)
+    // === PRIORITY-BASED FAULT CHECKING ===
+    // Each fault is checked independently in strict priority order
+    
+    // 1. ERROR FAULTS (Highest Priority) - Operation fails immediately
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_WRITE, &error_code))) {
-        LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
+    if (apply_error_fault(FS_OP_WRITE, &error_code)) {
+        LOG_INFO("Error fault triggered for write: %s, returning error %d", path, error_code);
         return error_code;
     }
     
-    // 2. Apply delay fault if applicable
-    apply_delay_fault(FS_OP_WRITE);
+    // 2. TIMING FAULTS - Operation fails due to time conditions
+    if (check_timing_fault(FS_OP_WRITE)) {
+        LOG_INFO("Timing fault triggered for write: %s, returning I/O error", path);
+        return -EIO;
+    }
     
-    // Always check write permission, regardless of whether we have a file handle
+    // 3. OPERATION COUNT FAULTS - Operation fails due to count conditions  
+    if (check_operation_count_fault(FS_OP_WRITE)) {
+        LOG_INFO("Operation count fault triggered for write: %s, returning I/O error", path);
+        return -EIO;
+    }
+    
+    // 4. PERMISSION CHECK - Always validate write permissions
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Write denied due to permission check: %s", path);
+        LOG_INFO("Write permission denied: %s", path);
         return res;
     }
     
-    // 3. Apply partial operation fault if applicable
-    size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    // === NON-FAILING FAULTS (Operation continues) ===
     
-    // 4. Handle corruption (create a local copy of the buffer and corrupt it)
+    // 5. DELAY FAULTS - Add latency but operation continues
+    apply_delay_fault(FS_OP_WRITE);
+    
+    // 6. PARTIAL FAULTS - Adjust operation size
+    size_t actual_size = apply_partial_fault(FS_OP_WRITE, size);
+    
+    // 7. CORRUPTION FAULTS - Corrupt data but operation succeeds
     char *corrupted_buf = NULL;
-    fs_config_t *config = config_get_global();
     
-    if (should_fault || (config->corruption_fault && 
-                        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) && 
-                        check_probability(config->corruption_fault->probability))) {
-            
-        // Create a copy of the buffer that we can corrupt
-        corrupted_buf = malloc(adjusted_size);
+    // Check if corruption should be applied
+    if (config->corruption_fault && 
+        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) &&
+        check_probability(config->corruption_fault->probability)) {
+        
+        // Create corrupted copy
+        corrupted_buf = malloc(actual_size);
         if (corrupted_buf) {
-            memcpy(corrupted_buf, buf, adjusted_size);
-            
-            // Apply corruption to the buffer
-            size_t corrupt_bytes = (size_t)(adjusted_size * config->corruption_fault->percentage / 100.0);
-            if (corrupt_bytes == 0 && config->corruption_fault->percentage > 0) {
-                corrupt_bytes = 1;
+            memcpy(corrupted_buf, buf, actual_size);
+            // Apply corruption to our copy
+            if (apply_corruption_fault(FS_OP_WRITE, corrupted_buf, actual_size)) {
+                LOG_DEBUG("Corruption applied to buffer");
+            } else {
+                LOG_DEBUG("Corruption function failed, using original buffer");
+                free(corrupted_buf);
+                corrupted_buf = NULL;
             }
-            
-            LOG_INFO("Corruption fault injected for write: corrupting %zu of %zu bytes (%.1f%%)",
-                    corrupt_bytes, adjusted_size, config->corruption_fault->percentage);
-            
-            // Corrupt random bytes in the buffer
-            for (size_t i = 0; i < corrupt_bytes; i++) {
-                size_t pos = rand() % adjusted_size;
-                corrupted_buf[pos] = (char)(rand() % 256);  // Replace with random byte
-            }
+        } else {
+            LOG_ERROR("Failed to allocate corruption buffer, using original");
         }
     }
     
-    // 5. Perform the actual operation with either the original or corrupted buffer
-    res = fs_op_write(path, corrupted_buf ? corrupted_buf : buf, adjusted_size, offset, fi);
+    // 8. PERFORM OPERATION
+    const char *final_buf = corrupted_buf ? corrupted_buf : buf;
+    res = fs_op_write(path, final_buf, actual_size, offset, fi);
     
-    // Free our corrupted buffer if we created one
+    // Cleanup
     if (corrupted_buf) {
         free(corrupted_buf);
     }
     
-    // Update stats and return
+    // Update statistics
     if (res > 0) {
         update_operation_stats(FS_OP_WRITE, res);
     }
+    
     return res;
 }
 ```
@@ -384,34 +422,43 @@ Faults can be triggered by multiple conditions:
 3. **Operation count triggering** - Faults can be triggered based on operation count or bytes processed
 4. **Operation selection** - Each fault can be applied to specific operations using a bitmask
 
-The `should_trigger_fault` function checks timing and operation count conditions:
+In the new priority-based design, each fault type is checked independently in each operation wrapper:
 
 ```c
-bool should_trigger_fault(fs_op_type_t operation) {
-    fs_config_t *config = config_get_global();
-    
-    if (!config->enable_fault_injection) {
-        return false;
+// Priority-based fault checking example (simplified):
+static int fs_fault_operation(const char *path, ...) {
+    // 1. Check error faults first (highest priority - can abort operation)
+    int error_code = -EIO;
+    if (apply_error_fault(operation_type, &error_code)) {
+        return error_code;  // Operation fails immediately
     }
     
-    // Count this operation
-    stats.operation_count++;
-    stats.op_counts[operation]++;
-    
-    // Check if any timing condition is met
-    if (check_timing_fault(operation)) {
-        LOG_INFO("Fault triggered for %s due to timing condition", fs_op_names[operation]);
-        return true;
+    // 2. Check timing faults (can abort operation)
+    if (check_timing_fault(operation_type)) {
+        return -EIO;  // Operation fails due to timing condition
     }
     
-    // Check if any operation count condition is met
-    if (check_operation_count_fault(operation)) {
-        LOG_INFO("Fault triggered for %s due to operation count condition", fs_op_names[operation]);
-        return true;
+    // 3. Check operation count faults (can abort operation)
+    if (check_operation_count_fault(operation_type)) {
+        return -EIO;  // Operation fails due to count condition
     }
     
-    // For all other fault types, we'll check them at the point of use
-    return false;
+    // 4. Check permissions (always validate)
+    if (permission_check_needed && fs_op_access(path, required_mode) != 0) {
+        return -EACCES;  // Permission denied
+    }
+    
+    // 5. Apply delay faults (operation continues with latency)
+    apply_delay_fault(operation_type);
+    
+    // 6. Apply partial faults (operation continues with adjusted size)
+    size_t adjusted_size = apply_partial_fault(operation_type, original_size);
+    
+    // 7. Apply corruption faults (operation succeeds but data is corrupted)
+    // ... corruption logic for write operations only
+    
+    // 8. Perform the actual operation
+    return fs_op_operation(path, ...);
 }
 ```
 

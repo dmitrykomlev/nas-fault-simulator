@@ -32,4 +32,8 @@ size_t apply_partial_fault(fs_op_type_t operation, size_t original_size);
 // Helper function to check if a probability threshold is met (for internal use)
 bool check_probability(float probability);
 
+// Individual fault type checkers (for new priority system)
+bool check_timing_fault(fs_op_type_t operation);
+bool check_operation_count_fault(fs_op_type_t operation);
+
 #endif // FAULT_INJECTOR_H

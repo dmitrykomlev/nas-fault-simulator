@@ -90,23 +90,35 @@ static int check_file_perms(const char *path, int mode) {
 
 int fs_op_getattr(const char *path, struct stat *stbuf) {
     LOG_DEBUG("getattr: %s", path);
+    LOG_DEBUG("GETATTR_STEP_1: Starting getattr operation for %s", path);
     
     int res = 0;
+    LOG_DEBUG("GETATTR_STEP_2: Getting full path for %s", path);
     char *fullpath = get_full_path(path);
     
-    if (!fullpath) return -ENOMEM;
+    if (!fullpath) {
+        LOG_DEBUG("GETATTR_STEP_3: Failed to get full path for %s", path);
+        return -ENOMEM;
+    }
     
+    LOG_DEBUG("GETATTR_STEP_4: Full path is %s, initializing stat buffer", fullpath);
     memset(stbuf, 0, sizeof(struct stat));
     
+    LOG_DEBUG("GETATTR_STEP_5: About to call lstat() for %s", fullpath);
     res = lstat(fullpath, stbuf);
+    LOG_DEBUG("GETATTR_STEP_6: lstat() returned %d for %s", res, fullpath);
+    
+    LOG_DEBUG("GETATTR_STEP_7: Freeing fullpath for %s", path);
     free(fullpath);
     
     if (res == -1) {
         res = -errno;
+        LOG_DEBUG("GETATTR_STEP_8: lstat failed for %s, errno=%d (%s)", path, -res, strerror(errno));
         LOG_DEBUG("getattr failed: %s, error: %s", path, strerror(errno));
         return res;
     }
     
+    LOG_DEBUG("GETATTR_STEP_9: getattr operation complete for %s, returning success", path);
     return 0;
 }
 
@@ -281,22 +293,28 @@ int fs_op_read(const char *path, char *buf, size_t size, off_t offset, struct fu
 
 int fs_op_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     LOG_DEBUG("write: %s, size: %zu, offset: %ld", path, size, offset);
+    LOG_DEBUG("WRITE_STEP_1: Starting write operation for %s", path);
     
     int fd;
     int res;
     
+    LOG_DEBUG("WRITE_STEP_2: Checking file handle for %s (fi=%p)", path, fi);
     if (fi == NULL) {
+        LOG_DEBUG("WRITE_STEP_3a: No file handle, checking permissions for %s", path);
         // No file handle provided, check write permission
         int perms = check_file_perms(path, W_OK);
         if (perms != 0) {
             LOG_DEBUG("write denied: no write permission for %s", path);
             return perms;
         }
+        LOG_DEBUG("WRITE_STEP_4a: Permissions OK, getting full path for %s", path);
         
         char *fullpath = get_full_path(path);
         if (!fullpath) return -ENOMEM;
+        LOG_DEBUG("WRITE_STEP_5a: Full path: %s, calling open()", fullpath);
         
         fd = open(fullpath, O_WRONLY);
+        LOG_DEBUG("WRITE_STEP_6a: open() returned fd=%d for %s", fd, path);
         free(fullpath);
         
         if (fd == -1) {
@@ -305,19 +323,29 @@ int fs_op_write(const char *path, const char *buf, size_t size, off_t offset, st
             return err;
         }
     } else {
+        LOG_DEBUG("WRITE_STEP_3b: Using existing file handle fd=%d for %s", (int)fi->fh, path);
         fd = fi->fh;
     }
     
+    LOG_DEBUG("WRITE_STEP_7: About to call pwrite() for %s (fd=%d, size=%zu, offset=%ld)", path, fd, size, offset);
     res = pwrite(fd, buf, size, offset);
+    LOG_DEBUG("WRITE_STEP_8: pwrite() returned %d for %s", res, path);
+    
     if (res == -1) {
         res = -errno;
         LOG_DEBUG("write failed: %s, error: %s", path, strerror(errno));
     }
     
+    LOG_DEBUG("WRITE_STEP_9: Checking if need to close fd for %s (fi=%p)", path, fi);
     if (fi == NULL) {
+        LOG_DEBUG("WRITE_STEP_10a: Closing fd=%d for %s", fd, path);
         close(fd);
+        LOG_DEBUG("WRITE_STEP_11a: Closed fd for %s", path);
+    } else {
+        LOG_DEBUG("WRITE_STEP_10b: Not closing fd (using file handle) for %s", path);
     }
     
+    LOG_DEBUG("WRITE_STEP_12: Write operation complete for %s, returning %d", path, res);
     return res;
 }
 

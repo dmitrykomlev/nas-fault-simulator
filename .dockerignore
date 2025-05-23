@@ -1,0 +1,34 @@
+# Exclude mount points and runtime directories
+**/nas-mount-*
+**/test-smb-mount*
+**/nas-storage*
+
+# Exclude build artifacts
+**/nas-emu-fuse
+!src/fuse-driver/nas-emu-fuse
+**/obj/
+**/*.o
+**/*.so
+
+# Exclude Git and IDE files
+.git/
+.gitignore
+**/.DS_Store
+**/.vscode/
+**/.idea/
+
+# Exclude logs and temporary files
+**/*.log
+**/tmp/
+**/temp/
+
+# Exclude documentation (not needed for build)
+**/*.md
+**/README*
+
+# Include only source code and essential config files
+!src/
+!scripts/
+!docker-compose*.yml
+!.env
+!CLAUDE.md

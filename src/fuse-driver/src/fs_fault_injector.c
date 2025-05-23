@@ -31,6 +31,8 @@ static fs_config_t *config;
 
 // Wrapper functions that can inject faults
 static int fs_fault_getattr(const char *path, struct stat *stbuf) {
+    LOG_DEBUG(">>> ENTER getattr: %s", path);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_GETATTR);
     
@@ -40,6 +42,7 @@ static int fs_fault_getattr(const char *path, struct stat *stbuf) {
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_GETATTR, &error_code))) {
         LOG_INFO("Error fault active for getattr: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT getattr: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -47,11 +50,15 @@ static int fs_fault_getattr(const char *path, struct stat *stbuf) {
     apply_delay_fault(FS_OP_GETATTR);
     
     // Perform the actual operation
-    return fs_op_getattr(path, stbuf);
+    int result = fs_op_getattr(path, stbuf);
+    LOG_DEBUG("<<< EXIT getattr: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                            off_t offset, struct fuse_file_info *fi) {
+    LOG_DEBUG(">>> ENTER readdir: %s (offset: %ld)", path, offset);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_READDIR);
     
@@ -61,6 +68,7 @@ static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_READDIR, &error_code))) {
         LOG_INFO("Error fault active for readdir: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT readdir: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -68,10 +76,14 @@ static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     apply_delay_fault(FS_OP_READDIR);
     
     // Perform the actual operation
-    return fs_op_readdir(path, buf, filler, offset, fi);
+    int result = fs_op_readdir(path, buf, filler, offset, fi);
+    LOG_DEBUG("<<< EXIT readdir: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    LOG_DEBUG(">>> ENTER create: %s (mode: %o)", path, mode);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_CREATE);
     
@@ -81,6 +93,7 @@ static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info 
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_CREATE, &error_code))) {
         LOG_INFO("Error fault active for create: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT create: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -93,14 +106,19 @@ static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info 
         int res = fs_op_access(path, W_OK);
         if (res != 0) {
             LOG_DEBUG("Create denied due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT create: %s (permission denied: %d)", path, res);
             return res;
         }
     }
     
-    return fs_op_create(path, mode, fi);
+    int result = fs_op_create(path, mode, fi);
+    LOG_DEBUG("<<< EXIT create: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_mknod(const char *path, mode_t mode, dev_t rdev) {
+    LOG_DEBUG(">>> ENTER mknod: %s (mode: %o)", path, mode);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_MKNOD);
     
@@ -110,17 +128,22 @@ static int fs_fault_mknod(const char *path, mode_t mode, dev_t rdev) {
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_MKNOD, &error_code))) {
         LOG_INFO("Error fault active for mknod: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT mknod: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_MKNOD);
     
-    return fs_op_mknod(path, mode, rdev);
+    int result = fs_op_mknod(path, mode, rdev);
+    LOG_DEBUG("<<< EXIT mknod: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
                         struct fuse_file_info *fi) {
+    LOG_DEBUG(">>> ENTER read: %s (size: %zu, offset: %ld)", path, size, offset);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_READ);
     
@@ -130,6 +153,7 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_READ, &error_code))) {
         LOG_INFO("Error fault active for read: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT read: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -141,6 +165,7 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
         int res = fs_op_access(path, R_OK);
         if (res != 0) {
             LOG_DEBUG("Read denied due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT read: %s (permission denied: %d)", path, res);
             return res;
         }
     }
@@ -155,83 +180,114 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
     if (res > 0) {
         update_operation_stats(FS_OP_READ, res);
     }
+    LOG_DEBUG("<<< EXIT read: %s (result: %d)", path, res);
     return res;
 }
 
 // In fs_fault_injector.c, the fs_fault_write function needs to be updated to properly check permissions
 
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_WRITE);
+    LOG_DEBUG(">>> ENTER write: %s (size: %zu, offset: %ld)", path, size, offset);
     
-    // Try each fault type in order of precedence
+    fs_config_t *config = config_get_global();
     
-    // 1. Try error fault (highest precedence - returns error to caller)
+    if (!config->enable_fault_injection) {
+        LOG_DEBUG("Fault injection disabled, performing normal write");
+        return fs_op_write(path, buf, size, offset, fi);
+    }
+    
+    // === PRIORITY-BASED FAULT CHECKING ===
+    // Each fault is checked independently in strict priority order
+    
+    // 1. ERROR FAULTS (Highest Priority) - Operation fails immediately
+    LOG_DEBUG("Checking error faults...");
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_WRITE, &error_code))) {
-        LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
+    if (apply_error_fault(FS_OP_WRITE, &error_code)) {
+        LOG_DEBUG("<<< EXIT write: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
-    // 2. Apply delay fault if applicable
-    apply_delay_fault(FS_OP_WRITE);
+    // 2. TIMING FAULTS - Operation fails due to time conditions
+    LOG_DEBUG("Checking timing faults...");
+    if (check_timing_fault(FS_OP_WRITE)) {
+        LOG_DEBUG("<<< EXIT write: %s (timing fault: %d)", path, -EIO);
+        return -EIO;
+    }
     
-    // Always check write permission, regardless of whether we have a file handle
+    // 3. OPERATION COUNT FAULTS - Operation fails due to count conditions  
+    LOG_DEBUG("Checking operation count faults...");
+    if (check_operation_count_fault(FS_OP_WRITE)) {
+        LOG_DEBUG("<<< EXIT write: %s (count fault: %d)", path, -EIO);
+        return -EIO;
+    }
+    
+    // 4. PERMISSION CHECK - Always validate write permissions
+    LOG_DEBUG("Checking write permissions...");
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Write denied due to permission check: %s", path);
+        LOG_DEBUG("<<< EXIT write: %s (permission denied: %d)", path, res);
         return res;
     }
     
-    // 3. Apply partial operation fault if applicable
-    size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    // === NON-FAILING FAULTS (Operation continues) ===
     
-    // 4. Handle corruption (create a local copy of the buffer and corrupt it)
+    // 5. DELAY FAULTS - Add latency but operation continues
+    LOG_DEBUG("Applying delay faults...");
+    apply_delay_fault(FS_OP_WRITE);
+    
+    // 6. PARTIAL FAULTS - Adjust operation size
+    LOG_DEBUG("Applying partial faults...");
+    size_t actual_size = apply_partial_fault(FS_OP_WRITE, size);
+    LOG_DEBUG("Size after partial fault: %zu (original: %zu)", actual_size, size);
+    
+    // 7. CORRUPTION FAULTS - Corrupt data but operation succeeds
+    LOG_DEBUG("Applying corruption faults...");
     char *corrupted_buf = NULL;
-    fs_config_t *config = config_get_global();
     
-    if (should_fault || (config->corruption_fault && 
-                        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) && 
-                        check_probability(config->corruption_fault->probability))) {
-            
-        // Create a copy of the buffer that we can corrupt
-        corrupted_buf = malloc(adjusted_size);
+    // Check if corruption should be applied
+    if (config->corruption_fault && 
+        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) &&
+        check_probability(config->corruption_fault->probability)) {
+        
+        // Create corrupted copy
+        corrupted_buf = malloc(actual_size);
         if (corrupted_buf) {
-            memcpy(corrupted_buf, buf, adjusted_size);
-            
-            // Apply corruption to the buffer
-            size_t corrupt_bytes = (size_t)(adjusted_size * config->corruption_fault->percentage / 100.0);
-            if (corrupt_bytes == 0 && config->corruption_fault->percentage > 0) {
-                corrupt_bytes = 1;
+            memcpy(corrupted_buf, buf, actual_size);
+            // Apply corruption to our copy
+            if (apply_corruption_fault(FS_OP_WRITE, corrupted_buf, actual_size)) {
+                LOG_DEBUG("Corruption applied to buffer");
+            } else {
+                LOG_DEBUG("Corruption function failed, using original buffer");
+                free(corrupted_buf);
+                corrupted_buf = NULL;
             }
-            
-            LOG_INFO("Corruption fault injected for write: corrupting %zu of %zu bytes (%.1f%%)",
-                    corrupt_bytes, adjusted_size, config->corruption_fault->percentage);
-            
-            // Corrupt random bytes in the buffer
-            for (size_t i = 0; i < corrupt_bytes; i++) {
-                size_t pos = rand() % adjusted_size;
-                corrupted_buf[pos] = (char)(rand() % 256);  // Replace with random byte
-            }
+        } else {
+            LOG_ERROR("Failed to allocate corruption buffer, using original");
         }
     }
     
-    // 5. Perform the actual operation with either the original or corrupted buffer
-    res = fs_op_write(path, corrupted_buf ? corrupted_buf : buf, adjusted_size, offset, fi);
+    // 8. PERFORM OPERATION
+    const char *final_buf = corrupted_buf ? corrupted_buf : buf;
+    LOG_DEBUG("Performing write operation with %s buffer", corrupted_buf ? "corrupted" : "original");
+    res = fs_op_write(path, final_buf, actual_size, offset, fi);
     
-    // Free our corrupted buffer if we created one
+    // Cleanup
     if (corrupted_buf) {
         free(corrupted_buf);
     }
     
-    // Update stats and return
+    // Update statistics
     if (res > 0) {
         update_operation_stats(FS_OP_WRITE, res);
     }
+    
+    LOG_DEBUG("<<< EXIT write: %s (result: %d)", path, res);
     return res;
 }
 
 static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
+    LOG_DEBUG(">>> ENTER open: %s (flags: 0x%x)", path, fi->flags);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_OPEN);
     
@@ -240,7 +296,7 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_OPEN, &error_code))) {
-        LOG_INFO("Error fault active for open: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT open: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -251,27 +307,31 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
     if ((fi->flags & O_ACCMODE) == O_RDONLY) {
         int res = fs_op_access(path, R_OK);
         if (res != 0) {
-            LOG_DEBUG("Open denied (read-only) due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT open: %s (permission denied: %d)", path, res);
             return res;
         }
     } else if ((fi->flags & O_ACCMODE) == O_WRONLY) {
         int res = fs_op_access(path, W_OK);
         if (res != 0) {
-            LOG_DEBUG("Open denied (write-only) due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT open: %s (permission denied: %d)", path, res);
             return res;
         }
     } else if ((fi->flags & O_ACCMODE) == O_RDWR) {
         int res = fs_op_access(path, R_OK | W_OK);
         if (res != 0) {
-            LOG_DEBUG("Open denied (read-write) due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT open: %s (permission denied: %d)", path, res);
             return res;
         }
     }
     
-    return fs_op_open(path, fi);
+    int result = fs_op_open(path, fi);
+    LOG_DEBUG("<<< EXIT open: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
+    LOG_DEBUG(">>> ENTER release: %s", path);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_RELEASE);
     
@@ -280,17 +340,21 @@ static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_RELEASE, &error_code))) {
-        LOG_INFO("Error fault active for release: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT release: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_RELEASE);
     
-    return fs_op_release(path, fi);
+    int result = fs_op_release(path, fi);
+    LOG_DEBUG("<<< EXIT release: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_mkdir(const char *path, mode_t mode) {
+    LOG_DEBUG(">>> ENTER mkdir: %s (mode: %o)", path, mode);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_MKDIR);
     
@@ -299,17 +363,21 @@ static int fs_fault_mkdir(const char *path, mode_t mode) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_MKDIR, &error_code))) {
-        LOG_INFO("Error fault active for mkdir: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT mkdir: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_MKDIR);
     
-    return fs_op_mkdir(path, mode);
+    int result = fs_op_mkdir(path, mode);
+    LOG_DEBUG("<<< EXIT mkdir: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_rmdir(const char *path) {
+    LOG_DEBUG(">>> ENTER rmdir: %s", path);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_RMDIR);
     
@@ -318,17 +386,21 @@ static int fs_fault_rmdir(const char *path) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_RMDIR, &error_code))) {
-        LOG_INFO("Error fault active for rmdir: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT rmdir: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_RMDIR);
     
-    return fs_op_rmdir(path);
+    int result = fs_op_rmdir(path);
+    LOG_DEBUG("<<< EXIT rmdir: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_unlink(const char *path) {
+    LOG_DEBUG(">>> ENTER unlink: %s", path);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_UNLINK);
     
@@ -337,17 +409,21 @@ static int fs_fault_unlink(const char *path) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_UNLINK, &error_code))) {
-        LOG_INFO("Error fault active for unlink: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT unlink: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_UNLINK);
     
-    return fs_op_unlink(path);
+    int result = fs_op_unlink(path);
+    LOG_DEBUG("<<< EXIT unlink: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_rename(const char *path, const char *newpath) {
+    LOG_DEBUG(">>> ENTER rename: %s to %s", path, newpath);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_RENAME);
     
@@ -356,17 +432,21 @@ static int fs_fault_rename(const char *path, const char *newpath) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_RENAME, &error_code))) {
-        LOG_INFO("Error fault active for rename: %s to %s, returning error %d", path, newpath, error_code);
+        LOG_DEBUG("<<< EXIT rename: %s to %s (error fault: %d)", path, newpath, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_RENAME);
     
-    return fs_op_rename(path, newpath);
+    int result = fs_op_rename(path, newpath);
+    LOG_DEBUG("<<< EXIT rename: %s to %s (result: %d)", path, newpath, result);
+    return result;
 }
 
 static int fs_fault_access(const char *path, int mode) {
+    LOG_DEBUG(">>> ENTER access: %s (mode: %d)", path, mode);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_ACCESS);
     
@@ -375,17 +455,21 @@ static int fs_fault_access(const char *path, int mode) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_ACCESS, &error_code))) {
-        LOG_INFO("Error fault active for access: %s, mode: %d, returning error %d", path, mode, error_code);
+        LOG_DEBUG("<<< EXIT access: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_ACCESS);
     
-    return fs_op_access(path, mode);
+    int result = fs_op_access(path, mode);
+    LOG_DEBUG("<<< EXIT access: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_chmod(const char *path, mode_t mode) {
+    LOG_DEBUG(">>> ENTER chmod: %s (mode: %o)", path, mode);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_CHMOD);
     
@@ -394,7 +478,7 @@ static int fs_fault_chmod(const char *path, mode_t mode) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_CHMOD, &error_code))) {
-        LOG_INFO("Error fault active for chmod: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT chmod: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -404,14 +488,18 @@ static int fs_fault_chmod(const char *path, mode_t mode) {
     // Check write permission
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Chmod denied due to permission check: %s", path);
+        LOG_DEBUG("<<< EXIT chmod: %s (permission denied: %d)", path, res);
         return res;
     }
     
-    return fs_op_chmod(path, mode);
+    int result = fs_op_chmod(path, mode);
+    LOG_DEBUG("<<< EXIT chmod: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
+    LOG_DEBUG(">>> ENTER chown: %s (uid: %d, gid: %d)", path, uid, gid);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_CHOWN);
     
@@ -420,7 +508,7 @@ static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_CHOWN, &error_code))) {
-        LOG_INFO("Error fault active for chown: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT chown: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -430,14 +518,18 @@ static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
     // Check write permission
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Chown denied due to permission check: %s", path);
+        LOG_DEBUG("<<< EXIT chown: %s (permission denied: %d)", path, res);
         return res;
     }
     
-    return fs_op_chown(path, uid, gid);
+    int result = fs_op_chown(path, uid, gid);
+    LOG_DEBUG("<<< EXIT chown: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_truncate(const char *path, off_t size) {
+    LOG_DEBUG(">>> ENTER truncate: %s (size: %ld)", path, size);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_TRUNCATE);
     
@@ -446,7 +538,7 @@ static int fs_fault_truncate(const char *path, off_t size) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_TRUNCATE, &error_code))) {
-        LOG_INFO("Error fault active for truncate: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT truncate: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -456,14 +548,18 @@ static int fs_fault_truncate(const char *path, off_t size) {
     // Check write permission
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Truncate denied due to permission check: %s", path);
+        LOG_DEBUG("<<< EXIT truncate: %s (permission denied: %d)", path, res);
         return res;
     }
     
-    return fs_op_truncate(path, size);
+    int result = fs_op_truncate(path, size);
+    LOG_DEBUG("<<< EXIT truncate: %s (result: %d)", path, result);
+    return result;
 }
 
 static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
+    LOG_DEBUG(">>> ENTER utimens: %s", path);
+    
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_UTIMENS);
     
@@ -472,7 +568,7 @@ static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
     if ((should_fault || apply_error_fault(FS_OP_UTIMENS, &error_code))) {
-        LOG_INFO("Error fault active for utimens: %s, returning error %d", path, error_code);
+        LOG_DEBUG("<<< EXIT utimens: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
@@ -482,11 +578,13 @@ static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
     // Check write permission
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Utimens denied due to permission check: %s", path);
+        LOG_DEBUG("<<< EXIT utimens: %s (permission denied: %d)", path, res);
         return res;
     }
     
-    return fs_op_utimens(path, ts);
+    int result = fs_op_utimens(path, ts);
+    LOG_DEBUG("<<< EXIT utimens: %s (result: %d)", path, result);
+    return result;
 }
 
 static struct fuse_operations fs_fault_oper = {
@@ -619,6 +717,7 @@ int main(int argc, char *argv[]) {
     // Initialize logging
     log_init(config->log_file, config->log_level);
     LOG_INFO("Filesystem Fault Injector initializing...");
+    LOG_INFO("Log level set to: %d (0=ERROR, 1=WARN, 2=INFO, 3=DEBUG)", config->log_level);
     LOG_INFO("Using storage path: %s", config->storage_path);
     
     // Create storage directory if it doesn't exist

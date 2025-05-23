@@ -94,45 +94,60 @@ The project is organized with the following structure:
 
 ```
 /nas-fault-simulator/
-├── docker-compose.yml            # Main Docker Compose file for all services
-├── .env                          # Environment variables for Docker Compose
-├── .env.local                    # Optional local environment overrides (git-ignored)
-├── .gitignore                    # Git ignore file
-├── README.md                     # Public documentation
-├── README-LLM.md                 # This context document
-├── README-LLM-CONF.md            # Configuration system documentation
-├── /scripts
-│   ├── config.sh                 # Configuration loader for scripts
-│   ├── build-fuse.sh             # Script to build the FUSE driver
-│   ├── run-fuse.sh               # Script to run the FUSE driver
-│   └── run_tests.sh              # Script to run all tests in Docker
-├── /src
-│   ├── /fuse-driver              # FUSE filesystem implementation
-│   │   ├── README-LLM-FUSE.md    # Detailed FUSE driver documentation
-│   │   ├── /src                  # Source code for FUSE driver
-│   │   │   ├── fs_fault_injector.c  # Main FUSE driver with fault wrappers
-│   │   │   ├── fs_operations.c   # Normal filesystem operations
-│   │   │   ├── fs_operations.h   # Headers for filesystem operations
-│   │   │   ├── fault_injector.c  # Fault injection logic
-│   │   │   ├── fault_injector.h  # Headers for fault injection
-│   │   │   ├── config.c          # Configuration system implementation
-│   │   │   ├── config.h          # Configuration system interface
-│   │   │   ├── log.c             # Logging system implementation
-│   │   │   └── log.h             # Logging system interface
-│   │   ├── /tests                # Tests for the FUSE driver
-│   │   │   ├── /functional       # Functional tests
-│   │   │   │   ├── run_all_tests.sh   # Script to run all tests
-│   │   │   │   ├── test_helpers.sh    # Common test helper functions
-│   │   │   │   ├── test_basic_ops.sh  # Basic operations tests
-│   │   │   │   └── test_large_file_ops.sh  # Large file operations tests
-│   │   │   └── /unit             # Unit tests (to be implemented)
-│   │   ├── /docker               # Docker configuration for FUSE driver
-│   │   │   └── Dockerfile.dev    # Development environment for FUSE driver
-│   │   ├── Makefile              # Build configuration for FUSE driver
-│   │   └── nas-emu-fuse.conf     # Configuration file for FUSE driver
-│   ├── /backend                  # Future Go backend service
-│   └── /dashboard                # Future web dashboard
-└── /nas-storage                  # Persistent storage for NAS data (created by Docker)
+├── docker-compose.yml               # Main runtime Docker Compose file
+├── docker-compose.build.yml         # Build-specific Docker Compose file  
+├── .env                             # Environment variables for Docker Compose
+├── CLAUDE.md                        # Claude Code assistant instructions
+├── README-LLM.md                    # This context document
+├── README-LLM-CONF.md               # Configuration system documentation
+├── /scripts/                       # Build and run scripts
+│   ├── config.sh                    # Central configuration loader
+│   ├── build-fuse.sh                # Build FUSE driver using build container
+│   ├── run-fuse.sh                  # Run FUSE driver with SMB services
+│   ├── run_tests.sh                 # Run all tests (basic + corruption)
+│   ├── mount-smb.sh                 # Helper to mount SMB share
+│   └── umount-smb.sh                # Helper to unmount SMB share
+├── /src/fuse-driver/                # FUSE filesystem implementation
+│   ├── README-LLM-FUSE.md           # Detailed FUSE driver documentation  
+│   ├── nas-emu-fuse.conf            # Default FUSE driver configuration
+│   ├── /src/                        # Source code for FUSE driver
+│   │   ├── fs_fault_injector.c      # Main FUSE driver with fault wrappers
+│   │   ├── fs_operations.c          # Core filesystem operations
+│   │   ├── fs_operations.h          # Filesystem operations interface
+│   │   ├── fs_common.c              # Common filesystem utilities
+│   │   ├── fs_common.h              # Common filesystem headers
+│   │   ├── fault_injector.c         # Fault injection logic and timing
+│   │   ├── fault_injector.h         # Fault injection interface
+│   │   ├── config.c                 # Configuration parser (CRITICAL: timing fault defaults)
+│   │   ├── config.h                 # Configuration system interface
+│   │   ├── log.c                    # Logging system implementation
+│   │   └── log.h                    # Logging system interface
+│   ├── /docker/                     # Docker configurations
+│   │   ├── Dockerfile.build         # Build-time container (compilation)
+│   │   ├── Dockerfile.runtime       # Runtime container (testing)
+│   │   ├── smb.conf                 # Samba configuration
+│   │   └── entrypoint.sh            # Container startup script
+│   └── /tests/                      # Test suites
+│       ├── /configs/                # Test configuration files (organized test-driven structure)
+│       │   ├── no_faults.conf       # Clean testing (no fault injection) - basic tests
+│       │   ├── corruption_none.conf # No corruption verification (fault injection disabled)
+│       │   ├── corruption_medium.conf # Medium corruption (50% probability, 30% data)
+│       │   ├── corruption_high.conf # High corruption (100% probability, 70% data)
+│       │   ├── corruption_corner_prob.conf # Corner case: 0% probability, 50% data
+│       │   └── corruption_corner_data.conf # Corner case: 100% probability, 0% data
+│       └── /functional/             # Functional test framework
+│           ├── README-LLM-FUNCTIONAL-TESTS.md  # Test architecture docs
+│           ├── run_all_tests.sh     # Basic framework test runner
+│           ├── test_helpers.sh      # Basic test framework utilities
+│           ├── test_framework.sh    # Advanced test framework (SMB)
+│           ├── test_basic_ops.sh    # Basic filesystem operations tests
+│           ├── test_large_file_ops.sh # Large file handling tests
+│           ├── test_corruption_none.sh # No corruption verification test
+│           ├── test_corruption_medium.sh # Medium corruption test (50% prob, 30% data)
+│           ├── test_corruption_high.sh # High corruption test (100% prob, 70% data)
+│           ├── test_corruption_corner_prob.sh # Corner case: 0% prob, 50% data
+│           ├── test_corruption_corner_data.sh # Corner case: 100% prob, 0% data
+│           └── test_production_skeleton.sh # Production test template
 ```
 
 ## Implementation Status
@@ -161,8 +176,13 @@ The project is organized with the following structure:
   - [x] Timing-based faults
   - [x] Operation count faults
 - [x] Config-based fault configuration with section format
-- [ ] Unit testing for fault conditions
-- [ ] Performance monitoring 
+- [ ] Fault injection testing
+  - [ ] Corruption fault tests
+  - [ ] Error injection tests
+  - [ ] Delay and timing-based fault tests
+  - [ ] Partial operation fault tests
+  - [ ] Operation count fault tests
+- [ ] Performance monitoring
 - [ ] API for external control
 
 ### Network Layer (SMB)
@@ -183,6 +203,26 @@ The project is organized with the following structure:
 - [ ] Fault configuration UI
 - [ ] Metrics visualization
 
+## Technical Debt / Future Improvements
+
+### Docker Volume Mount Strategy
+
+**Current Issue**: The entire project directory is mounted to the container (`- .:/app` in docker-compose.yml).
+
+**Problems**:
+- Exposes unnecessary files to container (documentation, git files, etc.)
+- Creates dependencies on host filesystem structure
+- Can cause build issues when mount points exist in project directory
+- Security concern - container has access to entire codebase
+
+**Preferred Approach**: 
+- Copy only essential files to container during build
+- Use multi-stage Docker builds to separate build and runtime dependencies
+- Mount only specific directories needed at runtime (e.g., configs, storage)
+- Use Docker COPY instructions instead of volume mounts for static files
+
+**Current Workaround**: `.dockerignore` file added to exclude problematic directories from build context.
+
 ## Configuration System
 
 The NAS Emulator uses a flexible configuration system with multiple layers:
@@ -192,6 +232,26 @@ The NAS Emulator uses a flexible configuration system with multiple layers:
 3. **Environment variables** - Docker runtime configuration
 
 See README-LLM-CONF.md for detailed information about the configuration system.
+
+### ⚠️ KNOWN CONFIGURATION ISSUE
+
+**Problem**: The current implementation has a configuration precedence conflict that causes debugging issues.
+
+**Root Cause**: The Docker entrypoint script passes `--loglevel="$NAS_LOG_LEVEL"` to the FUSE driver, which overrides the `log_level` setting from the configuration file. This creates a confusing situation where:
+- Config file says: `log_level = 3` (DEBUG)
+- But runtime gets: `--loglevel=2` (INFO) from environment variable
+- Result: DEBUG logs don't appear even when explicitly configured
+
+**Current Workaround**: Manually set `NAS_LOG_LEVEL=3` in the environment when debugging.
+
+**Architectural Issue**: Mixing configuration sources (command line + config file + environment variables) creates precedence conflicts and makes the system unpredictable. 
+
+**Recommendation**: Choose ONE configuration source:
+- **Option A**: Config file only (recommended for complex scenarios)
+- **Option B**: Command line only (recommended for simple deployments)
+- **Option C**: Environment variables only (recommended for containerized deployments)
+
+**Future Fix**: Redesign the configuration system to use a single source of truth with clear precedence rules documented and tested.
 
 ## Docker Environment
 
