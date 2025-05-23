@@ -139,7 +139,8 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
                 if (config->corruption_fault) {
                     config->corruption_fault->probability = 0.5;
                     config->corruption_fault->percentage = 10.0;
-                    config->corruption_fault->operations_mask = (1 << FS_OP_READ) | (1 << FS_OP_WRITE);  // Default: read/write only
+                    config->corruption_fault->silent = true;
+                    config->corruption_fault->operations_mask = (1 << FS_OP_WRITE);  // Default: write only (safer)
                 }
             } else if (strcmp(current_section, "delay_fault") == 0 && !config->delay_fault) {
                 config->delay_fault = calloc(1, sizeof(fault_delay_t));

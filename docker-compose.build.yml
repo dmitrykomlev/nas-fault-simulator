@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  fuse-builder:
+    build:
+      context: .
+      dockerfile: src/fuse-driver/docker/Dockerfile.build
+    volumes:
+      - .:/app
+    working_dir: /app/src/fuse-driver
+    # This container is only for building - exits after build
+    command: bash -c "make clean && make VERBOSE=1"

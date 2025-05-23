@@ -1,0 +1,104 @@
+FROM ubuntu:22.04
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    fuse \
+    samba \
+    smbclient \
+    gettext-base \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory
+WORKDIR /app
+
+# Set environment variables with default values
+ENV NAS_MOUNT_POINT=/mnt/nas-mount \
+    NAS_STORAGE_PATH=/var/nas-storage \
+    NAS_LOG_FILE=/var/log/nas-emu.log \
+    NAS_LOG_LEVEL=2 \
+    SMB_SHARE_NAME=nasshare \
+    SMB_USERNAME=nasusr \
+    SMB_PASSWORD=naspass
+
+# Create necessary directories and SMB user
+RUN mkdir -p ${NAS_MOUNT_POINT} && \
+    mkdir -p ${NAS_STORAGE_PATH} && \
+    mkdir -p $(dirname ${NAS_LOG_FILE}) && \
+    mkdir -p /var/log/samba && \
+    useradd -m ${SMB_USERNAME}
+
+# Create SMB configuration template
+RUN echo '[global]' > /etc/samba/smb.conf.template && \
+    echo '    workgroup = WORKGROUP' >> /etc/samba/smb.conf.template && \
+    echo '    server string = NAS Emulator' >> /etc/samba/smb.conf.template && \
+    echo '    security = user' >> /etc/samba/smb.conf.template && \
+    echo '    map to guest = bad user' >> /etc/samba/smb.conf.template && \
+    echo '    log file = /var/log/samba/log.%m' >> /etc/samba/smb.conf.template && \
+    echo '    max log size = 50' >> /etc/samba/smb.conf.template && \
+    echo '    dns proxy = no' >> /etc/samba/smb.conf.template && \
+    echo '    interfaces = lo eth0' >> /etc/samba/smb.conf.template && \
+    echo '    bind interfaces only = yes' >> /etc/samba/smb.conf.template && \
+    echo '' >> /etc/samba/smb.conf.template && \
+    echo '[${SMB_SHARE_NAME}]' >> /etc/samba/smb.conf.template && \
+    echo '    path = ${NAS_MOUNT_POINT}' >> /etc/samba/smb.conf.template && \
+    echo '    browseable = yes' >> /etc/samba/smb.conf.template && \
+    echo '    read only = no' >> /etc/samba/smb.conf.template && \
+    echo '    writable = yes' >> /etc/samba/smb.conf.template && \
+    echo '    create mask = 0777' >> /etc/samba/smb.conf.template && \
+    echo '    directory mask = 0777' >> /etc/samba/smb.conf.template && \
+    echo '    valid users = ${SMB_USERNAME}' >> /etc/samba/smb.conf.template && \
+    echo '    force user = root' >> /etc/samba/smb.conf.template
+
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'set -e' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Set SMB password' >> /entrypoint.sh && \
+    echo '(echo "$SMB_PASSWORD"; echo "$SMB_PASSWORD") | smbpasswd -a "$SMB_USERNAME" -s' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Generate SMB config from template with env var substitution' >> /entrypoint.sh && \
+    echo 'envsubst < /etc/samba/smb.conf.template > /etc/samba/smb.conf' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Ensure directories exist' >> /entrypoint.sh && \
+    echo 'mkdir -p "$NAS_MOUNT_POINT" "$NAS_STORAGE_PATH" "$(dirname "$NAS_LOG_FILE")"' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Start SMB services in background' >> /entrypoint.sh && \
+    echo 'service smbd start' >> /entrypoint.sh && \
+    echo 'service nmbd start' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Determine config file path' >> /entrypoint.sh && \
+    echo 'if [ -n "$CONFIG_FILE" ]; then' >> /entrypoint.sh && \
+    echo '    # Check if its just a filename (use configs directory)' >> /entrypoint.sh && \
+    echo '    if [[ "$CONFIG_FILE" != /* ]] && [[ "$CONFIG_FILE" != ./* ]]; then' >> /entrypoint.sh && \
+    echo '        FUSE_CONFIG="/configs/$CONFIG_FILE"' >> /entrypoint.sh && \
+    echo '    else' >> /entrypoint.sh && \
+    echo '        FUSE_CONFIG="$CONFIG_FILE"' >> /entrypoint.sh && \
+    echo '    fi' >> /entrypoint.sh && \
+    echo '    echo "Using FUSE config: $FUSE_CONFIG"' >> /entrypoint.sh && \
+    echo 'else' >> /entrypoint.sh && \
+    echo '    echo "ERROR: CONFIG_FILE environment variable must be set"' >> /entrypoint.sh && \
+    echo '    exit 1' >> /entrypoint.sh && \
+    echo 'fi' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Start FUSE driver' >> /entrypoint.sh && \
+    echo 'echo "Starting FUSE driver with config: $FUSE_CONFIG"' >> /entrypoint.sh && \
+    echo '/app/src/fuse-driver/nas-emu-fuse "$NAS_MOUNT_POINT" \' >> /entrypoint.sh && \
+    echo '    --storage="$NAS_STORAGE_PATH" \' >> /entrypoint.sh && \
+    echo '    --log="$NAS_LOG_FILE" \' >> /entrypoint.sh && \
+    echo '    --loglevel="$NAS_LOG_LEVEL" \' >> /entrypoint.sh && \
+    echo '    --config="$FUSE_CONFIG" &' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Wait a moment for FUSE to initialize' >> /entrypoint.sh && \
+    echo 'sleep 2' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Keep container running and monitor services' >> /entrypoint.sh && \
+    echo 'echo "All services started successfully"' >> /entrypoint.sh && \
+    echo 'tail -f /dev/null' >> /entrypoint.sh
+
+RUN chmod +x /entrypoint.sh
+
+# Mount point for source code volume
+VOLUME ["/app"]
+
+# Use entrypoint to configure and run all services
+ENTRYPOINT ["/entrypoint.sh"]

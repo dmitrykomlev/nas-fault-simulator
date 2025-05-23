@@ -161,9 +161,20 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
 // In fs_fault_injector.c, the fs_fault_write function needs to be updated to properly check permissions
 
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+    LOG_INFO("=== WRITE OPERATION START ===");
+    LOG_INFO("Path: %s, Size: %zu, Offset: %ld", path, size, offset);
+    
+    LOG_INFO("Step 1: Calling should_trigger_fault...");
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_WRITE);
+    LOG_INFO("Step 1 complete: should_trigger_fault result: %s", should_fault ? "TRUE" : "FALSE");
     
+    LOG_INFO("Step 2: Getting global config...");
+    // Check if fault injection is enabled at all
+    fs_config_t *config = config_get_global();
+    LOG_INFO("Step 2 complete: Fault injection enabled: %s", config->enable_fault_injection ? "YES" : "NO");
+    
+    LOG_INFO("Step 3: Checking error fault...");
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
@@ -172,62 +183,93 @@ static int fs_fault_write(const char *path, const char *buf, size_t size, off_t 
         LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
         return error_code;
     }
+    LOG_INFO("Step 3 complete: No error fault triggered");
     
+    LOG_INFO("Step 4: Checking delay fault...");
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_WRITE);
+    LOG_INFO("Step 4 complete: Delay fault checked");
     
+    LOG_INFO("Step 5: Checking write permissions...");
     // Always check write permission, regardless of whether we have a file handle
     int res = fs_op_access(path, W_OK);
     if (res != 0) {
-        LOG_DEBUG("Write denied due to permission check: %s", path);
+        LOG_INFO("Write denied due to permission check: %s", path);
         return res;
     }
+    LOG_INFO("Step 5 complete: Write permission OK");
     
+    LOG_INFO("Step 6: Checking partial fault...");
     // 3. Apply partial operation fault if applicable
     size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    LOG_INFO("Step 6 complete: Size after partial fault check: %zu (original: %zu)", adjusted_size, size);
     
+    LOG_INFO("Step 7: Starting corruption fault check...");
     // 4. Handle corruption (create a local copy of the buffer and corrupt it)
     char *corrupted_buf = NULL;
-    fs_config_t *config = config_get_global();
     
-    if (should_fault || (config->corruption_fault && 
-                        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) && 
-                        check_probability(config->corruption_fault->probability))) {
+    LOG_INFO("=== CORRUPTION FAULT CHECK ===");
+    LOG_INFO("Config corruption_fault pointer: %p", config->corruption_fault);
+    
+    if (config->corruption_fault) {
+        LOG_DEBUG("Corruption fault config found");
+        bool should_affect = config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE);
+        LOG_DEBUG("Should affect write operations: %s", should_affect ? "YES" : "NO");
+        
+        if (should_affect) {
+            LOG_DEBUG("Checking corruption probability (should_fault=%s)...", should_fault ? "TRUE" : "FALSE");
+            bool prob_result = check_probability(config->corruption_fault->probability);
+            LOG_DEBUG("Probability check result: %s", prob_result ? "TRIGGERED" : "not triggered");
             
-        // Create a copy of the buffer that we can corrupt
-        corrupted_buf = malloc(adjusted_size);
-        if (corrupted_buf) {
-            memcpy(corrupted_buf, buf, adjusted_size);
-            
-            // Apply corruption to the buffer
-            size_t corrupt_bytes = (size_t)(adjusted_size * config->corruption_fault->percentage / 100.0);
-            if (corrupt_bytes == 0 && config->corruption_fault->percentage > 0) {
-                corrupt_bytes = 1;
+            if (should_fault || prob_result) {
+                LOG_INFO("=== CORRUPTION TRIGGERED ===");
+                
+                // Create a copy of the buffer that we can corrupt
+                corrupted_buf = malloc(adjusted_size);
+                if (corrupted_buf) {
+                    memcpy(corrupted_buf, buf, adjusted_size);
+                    LOG_DEBUG("Created corruption buffer of size %zu", adjusted_size);
+                    
+                    // Apply corruption using the dedicated function
+                    bool corruption_applied = apply_corruption_fault(FS_OP_WRITE, corrupted_buf, adjusted_size);
+                    LOG_DEBUG("Corruption application result: %s", corruption_applied ? "SUCCESS" : "FAILED");
+                    
+                    if (!corruption_applied) {
+                        LOG_WARN("Corruption was triggered but application failed");
+                        free(corrupted_buf);
+                        corrupted_buf = NULL;
+                    }
+                } else {
+                    LOG_ERROR("Failed to allocate memory for corruption buffer");
+                }
+            } else {
+                LOG_DEBUG("Corruption not triggered (probability check failed)");
             }
-            
-            LOG_INFO("Corruption fault injected for write: corrupting %zu of %zu bytes (%.1f%%)",
-                    corrupt_bytes, adjusted_size, config->corruption_fault->percentage);
-            
-            // Corrupt random bytes in the buffer
-            for (size_t i = 0; i < corrupt_bytes; i++) {
-                size_t pos = rand() % adjusted_size;
-                corrupted_buf[pos] = (char)(rand() % 256);  // Replace with random byte
-            }
+        } else {
+            LOG_DEBUG("Write operations not affected by corruption configuration");
         }
+    } else {
+        LOG_DEBUG("No corruption fault configuration found");
     }
     
     // 5. Perform the actual operation with either the original or corrupted buffer
-    res = fs_op_write(path, corrupted_buf ? corrupted_buf : buf, adjusted_size, offset, fi);
+    const char *actual_buf = corrupted_buf ? corrupted_buf : buf;
+    LOG_DEBUG("Performing write with %s buffer", corrupted_buf ? "CORRUPTED" : "original");
+    res = fs_op_write(path, actual_buf, adjusted_size, offset, fi);
+    LOG_DEBUG("Write operation result: %d", res);
     
     // Free our corrupted buffer if we created one
     if (corrupted_buf) {
         free(corrupted_buf);
+        LOG_DEBUG("Freed corruption buffer");
     }
     
     // Update stats and return
     if (res > 0) {
         update_operation_stats(FS_OP_WRITE, res);
     }
+    
+    LOG_DEBUG("=== WRITE OPERATION END ===");
     return res;
 }
 
@@ -272,9 +314,15 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
 }
 
 static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
+    LOG_INFO("=== RELEASE OPERATION START ===");
+    LOG_INFO("Release path: %s", path);
+    
+    LOG_INFO("Release step 1: Calling should_trigger_fault...");
     // First check if any timing or operation count conditions would trigger a fault
     bool should_fault = should_trigger_fault(FS_OP_RELEASE);
+    LOG_INFO("Release step 1 complete: should_fault = %s", should_fault ? "TRUE" : "FALSE");
     
+    LOG_INFO("Release step 2: Checking error fault...");
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
@@ -283,11 +331,19 @@ static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
         LOG_INFO("Error fault active for release: %s, returning error %d", path, error_code);
         return error_code;
     }
+    LOG_INFO("Release step 2 complete: No error fault");
     
+    LOG_INFO("Release step 3: Checking delay fault...");
     // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_RELEASE);
+    LOG_INFO("Release step 3 complete: Delay fault checked");
     
-    return fs_op_release(path, fi);
+    LOG_INFO("Release step 4: Calling fs_op_release...");
+    int result = fs_op_release(path, fi);
+    LOG_INFO("Release step 4 complete: fs_op_release returned %d", result);
+    
+    LOG_INFO("=== RELEASE OPERATION END ===");
+    return result;
 }
 
 static int fs_fault_mkdir(const char *path, mode_t mode) {
@@ -619,6 +675,7 @@ int main(int argc, char *argv[]) {
     // Initialize logging
     log_init(config->log_file, config->log_level);
     LOG_INFO("Filesystem Fault Injector initializing...");
+    LOG_INFO("Log level set to: %d (0=ERROR, 1=WARN, 2=INFO, 3=DEBUG)", config->log_level);
     LOG_INFO("Using storage path: %s", config->storage_path);
     
     // Create storage directory if it doesn't exist

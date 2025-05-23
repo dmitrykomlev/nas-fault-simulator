@@ -161,8 +161,13 @@ The project is organized with the following structure:
   - [x] Timing-based faults
   - [x] Operation count faults
 - [x] Config-based fault configuration with section format
-- [ ] Unit testing for fault conditions
-- [ ] Performance monitoring 
+- [ ] Fault injection testing
+  - [ ] Corruption fault tests
+  - [ ] Error injection tests
+  - [ ] Delay and timing-based fault tests
+  - [ ] Partial operation fault tests
+  - [ ] Operation count fault tests
+- [ ] Performance monitoring
 - [ ] API for external control
 
 ### Network Layer (SMB)
@@ -192,6 +197,26 @@ The NAS Emulator uses a flexible configuration system with multiple layers:
 3. **Environment variables** - Docker runtime configuration
 
 See README-LLM-CONF.md for detailed information about the configuration system.
+
+### ⚠️ KNOWN CONFIGURATION ISSUE
+
+**Problem**: The current implementation has a configuration precedence conflict that causes debugging issues.
+
+**Root Cause**: The Docker entrypoint script passes `--loglevel="$NAS_LOG_LEVEL"` to the FUSE driver, which overrides the `log_level` setting from the configuration file. This creates a confusing situation where:
+- Config file says: `log_level = 3` (DEBUG)
+- But runtime gets: `--loglevel=2` (INFO) from environment variable
+- Result: DEBUG logs don't appear even when explicitly configured
+
+**Current Workaround**: Manually set `NAS_LOG_LEVEL=3` in the environment when debugging.
+
+**Architectural Issue**: Mixing configuration sources (command line + config file + environment variables) creates precedence conflicts and makes the system unpredictable. 
+
+**Recommendation**: Choose ONE configuration source:
+- **Option A**: Config file only (recommended for complex scenarios)
+- **Option B**: Command line only (recommended for simple deployments)
+- **Option C**: Environment variables only (recommended for containerized deployments)
+
+**Future Fix**: Redesign the configuration system to use a single source of truth with clear precedence rules documented and tested.
 
 ## Docker Environment
 
