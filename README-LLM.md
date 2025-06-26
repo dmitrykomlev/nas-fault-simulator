@@ -212,14 +212,22 @@ The project is organized with the following structure:
 **Problems**:
 - Exposes unnecessary files to container (documentation, git files, etc.)
 - Creates dependencies on host filesystem structure
-- Can cause build issues when mount points exist in project directory
+- **Circular Mount Issue**: When SMB shares are mounted on host in project subdirectories (like `./smb-mount`), they get exposed back to the container through the `.:/app` mount, creating circular dependencies that cause SMB operation hangs
 - Security concern - container has access to entire codebase
+
+**Circular Mount Problem Details**:
+1. Host creates `nas-storage/` and `smb-mount/` directories in project root
+2. Container exposes SMB share from internal storage  
+3. Host mounts SMB share to `./smb-mount/`
+4. Container sees the mounted SMB share through the `.:/app` volume mount
+5. This creates a circular dependency causing SMB operation hangs
 
 **Preferred Approach**: 
 - Copy only essential files to container during build
 - Use multi-stage Docker builds to separate build and runtime dependencies
 - Mount only specific directories needed at runtime (e.g., configs, storage)
 - Use Docker COPY instructions instead of volume mounts for static files
+- **Critical**: Avoid mounting entire project directory in runtime to prevent circular mount issues
 
 **Current Workaround**: `.dockerignore` file added to exclude problematic directories from build context.
 

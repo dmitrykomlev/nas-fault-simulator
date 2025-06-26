@@ -295,18 +295,21 @@ int fs_op_write(const char *path, const char *buf, size_t size, off_t offset, st
     LOG_DEBUG("write: %s, size: %zu, offset: %ld", path, size, offset);
     LOG_DEBUG("WRITE_STEP_1: Starting write operation for %s", path);
     
+    // Always check write permission, even if file handle is provided
+    // This prevents root from bypassing permissions via shell redirection
+    LOG_DEBUG("WRITE_STEP_1a: Checking write permissions for %s", path);
+    int perms = check_file_perms(path, W_OK);
+    if (perms != 0) {
+        LOG_DEBUG("write denied: no write permission for %s", path);
+        return perms;
+    }
+    
     int fd;
     int res;
     
     LOG_DEBUG("WRITE_STEP_2: Checking file handle for %s (fi=%p)", path, fi);
     if (fi == NULL) {
-        LOG_DEBUG("WRITE_STEP_3a: No file handle, checking permissions for %s", path);
-        // No file handle provided, check write permission
-        int perms = check_file_perms(path, W_OK);
-        if (perms != 0) {
-            LOG_DEBUG("write denied: no write permission for %s", path);
-            return perms;
-        }
+        LOG_DEBUG("WRITE_STEP_3a: No file handle, opening file for %s", path);
         LOG_DEBUG("WRITE_STEP_4a: Permissions OK, getting full path for %s", path);
         
         char *fullpath = get_full_path(path);

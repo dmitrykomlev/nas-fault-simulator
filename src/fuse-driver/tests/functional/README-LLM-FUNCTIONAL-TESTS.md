@@ -13,9 +13,16 @@ The functional test suite for the NAS Emulator FUSE driver consists of two disti
 
 ### Important: Circular Mount Dependency Issue
 
-**Problem**: Mounting entire project to container (`.:/app`) along with volume mounts from the same directory can cause circular dependencies and SMB operation hangs.
+**Problem**: When the entire project directory is mounted to the container (`.:/app`) AND SMB shares are mounted on the host in subdirectories of the project (like `./smb-mount`), it creates a circular mount loop:
+1. Host creates `nas-storage/` and `smb-mount/` directories in project root
+2. Container exposes SMB share from internal storage
+3. Host mounts SMB share to `./smb-mount/` 
+4. Container sees the mounted SMB share through the `.:/app` volume mount
+5. This creates a circular dependency causing SMB operation hangs
 
-**Solution**: Test framework uses `USE_HOST_STORAGE=false` to avoid circular mounts. For testing, storage is internal to container rather than mounted from host.
+**Root Cause**: Mounting the entire project directory (`.:/app`) in runtime exposes host-mounted SMB shares back to the container, creating the circular dependency.
+
+**Solution**: Avoid mounting the entire project directory to the container in runtime. Only mount specific directories needed (configs, storage, etc.).
 
 ### Basic Test Framework (`test_helpers.sh`)
 
@@ -265,8 +272,10 @@ if (check_operation_count_fault(FS_OP_WRITE)) {
 # Run all basic tests (no fault injection)
 ./scripts/run_tests.sh
 
-# Run basic tests directly in container
-docker compose exec fuse-dev bash -c "cd /app/src/fuse-driver/tests/functional && ./run_all_tests.sh"
+# Run basic tests directly in container (after copying scripts)
+docker compose exec fuse-dev mkdir -p /tests
+docker cp src/fuse-driver/tests/functional/*.sh $(docker compose ps -q fuse-dev):/tests/
+docker compose exec fuse-dev bash -c "cd /tests && ./run_all_tests.sh"
 
 # Run organized corruption tests manually
 ./src/fuse-driver/tests/functional/test_corruption_none.sh

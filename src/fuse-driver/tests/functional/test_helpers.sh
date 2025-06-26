@@ -11,9 +11,21 @@ else
     SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 fi
 
-# First go to the functional tests dir, then up to tests, then up to fuse-driver, then up to src, then up to project root
-PROJECT_ROOT=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
-source "${PROJECT_ROOT}/scripts/config.sh"
+# When running inside container, use environment variables directly
+# (config.sh is not available inside container)
+if [ -z "${NAS_MOUNT_POINT}" ]; then
+    # If not set, try to source config.sh (for local development)
+    PROJECT_ROOT=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
+    if [ -f "${PROJECT_ROOT}/scripts/config.sh" ]; then
+        source "${PROJECT_ROOT}/scripts/config.sh"
+    else
+        # Fallback defaults for container environment
+        export NAS_MOUNT_POINT=${NAS_MOUNT_POINT:-/mnt/nas-mount}
+        export NAS_STORAGE_PATH=${NAS_STORAGE_PATH:-/var/nas-storage}
+        export NAS_LOG_FILE=${NAS_LOG_FILE:-/var/log/nas-emu.log}
+        export NAS_LOG_LEVEL=${NAS_LOG_LEVEL:-2}
+    fi
+fi
 
 # Colors for test output
 RED='\033[0;31m'
@@ -133,8 +145,8 @@ run_test() {
 # Setup test directory
 setup_test_dir() {
     local TEST_NAME=$1
-    # Use a temporary directory within the project root instead of NAS_MOUNT_POINT
-    local TEST_DIR="${PROJECT_ROOT}/tmp_test_${TEST_NAME}_$(date +%s)"
+    # Use a temporary directory within the FUSE mount point for proper FUSE testing
+    local TEST_DIR="${NAS_MOUNT_POINT}/tmp_test_${TEST_NAME}_$(date +%s)"
     mkdir -p "$TEST_DIR"
     echo "$TEST_DIR"
 }

@@ -129,16 +129,21 @@ run_test_with_config() {
     # Set cleanup trap only for interruptions (not normal exit)
     trap cleanup_test_environment INT TERM
     
-    # Step 1: Build FUSE driver
-    echo -e "\n${YELLOW}Step 1: Building FUSE driver...${NC}"
-    cd "${PROJECT_ROOT}"
-    
-    "${PROJECT_ROOT}/scripts/build-fuse.sh" > /dev/null 2>&1
-    if [ $? -eq 0 ]; then
-        report_result "FUSE Build" 0 "FUSE driver built successfully"
+    # Step 1: Build FUSE driver (unless skip is requested)
+    if [ "${SKIP_FUSE_BUILD}" != "true" ]; then
+        echo -e "\n${YELLOW}Step 1: Building FUSE driver...${NC}"
+        cd "${PROJECT_ROOT}"
+        
+        "${PROJECT_ROOT}/scripts/build-fuse.sh" > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            report_result "FUSE Build" 0 "FUSE driver built successfully"
+        else
+            report_result "FUSE Build" 1 "FUSE driver build failed"
+            return 1
+        fi
     else
-        report_result "FUSE Build" 1 "FUSE driver build failed"
-        return 1
+        echo -e "\n${YELLOW}Step 1: Skipping FUSE build (already built)${NC}"
+        report_result "FUSE Build" 0 "FUSE driver build skipped (pre-built)"
     fi
     
     # Step 2: Start container with FUSE and SMB services
