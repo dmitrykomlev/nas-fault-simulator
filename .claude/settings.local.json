@@ -4,7 +4,9 @@
       "Bash(./test_debug_framework.sh:*)",
       "Bash(docker exec:*)",
       "Bash(find:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "mcp__filesystem__search_files",
+      "mcp__filesystem__read_multiple_files"
     ]
   },
   "enableAllProjectMcpServers": false
