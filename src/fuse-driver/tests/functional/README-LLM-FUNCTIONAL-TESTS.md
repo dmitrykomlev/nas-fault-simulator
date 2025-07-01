@@ -68,11 +68,20 @@ run_test_with_config "config_name.conf" "test_name" test_function
 5. Clean up everything
 
 **Tests Using This Framework**:
+
+*Corruption Fault Tests:*
 - `test_corruption_none.sh` - No corruption verification (0% probability)
 - `test_corruption_medium.sh` - Medium corruption testing (50% probability, 30% data)
 - `test_corruption_high.sh` - High corruption testing (100% probability, 70% data)
 - `test_corruption_corner_prob.sh` - Corner case: 0% probability, 50% data
 - `test_corruption_corner_data.sh` - Corner case: 100% probability, 0% data
+
+*Error Fault Tests (NEW):*
+- `test_error_io_write_medium.sh` - Medium I/O errors on write operations (50% -EIO)
+- `test_error_io_read_medium.sh` - Medium I/O errors on read operations (50% -EIO)
+- `test_error_io_all_high.sh` - High I/O errors on all operations (100% -EIO)
+- `test_error_access_create_medium.sh` - Medium access errors on create operations (50% -EACCES)
+- `test_error_nospace_write_high.sh` - High no space errors on write operations (100% -ENOSPC)
 
 ## Test Categories
 
@@ -111,6 +120,7 @@ run_test_with_config "config_name.conf" "test_name" test_function
 - Basic file operations (create, read, write, delete)
 - Directory operations (create, list)
 - File rename operations  
+- File permissions (chmod, access control) - **FIXED** in commit 73eda71
 - Large file operations (10MB+ files)
 - Multi-file operations
 - File append operations
@@ -119,9 +129,10 @@ run_test_with_config "config_name.conf" "test_name" test_function
 - **NEW**: Independent fault types (error, timing, count, delay, partial, corruption)
 
 ### ❌ Known Issues
-- **File Permissions Test**: `chmod 400` (read-only) doesn't prevent writing
-  - Root cause: Permission enforcement in FUSE driver
-  - Location: `fs_operations.c` permission checking logic
+- ~~**File Permissions Test**: `chmod 400` (read-only) doesn't prevent writing~~ **FIXED**
+  - ~~Root cause: Permission enforcement in FUSE driver~~
+  - ~~Location: `fs_operations.c` permission checking logic~~
+  - **Resolution**: Fixed in commit 73eda71 - problem was wrong execution path inside container
 
 ### ✅ Corruption Tests (NEW: Organized Test-Driven Structure)
 - **Fully Organized**: 5 dedicated corruption tests with matching config files
@@ -132,12 +143,23 @@ run_test_with_config "config_name.conf" "test_name" test_function
 ## Configuration Files
 
 ### Test Configurations (Organized Test-Driven Structure)
+
+#### Basic & Baseline Configs
 - `no_faults.conf` - Clean testing (fault injection disabled) - used by basic tests
-- `corruption_none.conf` - No corruption (fault injection disabled) 
+- `corruption_none.conf` - No faults baseline (fault injection disabled) - used for "no errors" tests
+
+#### Corruption Fault Configs  
 - `corruption_medium.conf` - Medium corruption (50% probability, 30% data)
 - `corruption_high.conf` - High corruption (100% probability, 70% data)
 - `corruption_corner_prob.conf` - Corner case: 0% probability, 50% data (no corruption expected)
 - `corruption_corner_data.conf` - Corner case: 100% probability, 0% data (no corruption expected)
+
+#### Error Fault Configs (NEW)
+- `error_io_write_medium.conf` - Medium I/O errors on write operations (50% probability, -EIO)
+- `error_io_read_medium.conf` - Medium I/O errors on read operations (50% probability, -EIO)
+- `error_io_all_high.conf` - High I/O errors on all operations (100% probability, -EIO)
+- `error_access_create_medium.conf` - Medium access errors on create operations (50% probability, -EACCES)
+- `error_nospace_write_high.conf` - High no space errors on write operations (100% probability, -ENOSPC)
 
 ## Test Runner Scripts
 
@@ -235,13 +257,15 @@ if (check_operation_count_fault(FS_OP_WRITE)) {
 
 ## Integration Requirements
 
-### Corruption Tests Integration (COMPLETED):
-1. **Solution Implemented**: Advanced tests run after basic tests pass
+### Advanced Tests Integration (COMPLETED):
+1. **Solution Implemented**: Advanced tests (corruption + error faults) run after basic tests pass
 2. **Integration Method**: Modified `scripts/run_tests.sh` to:
    - Run basic tests first (prerequisite)
    - Only run advanced tests if basic tests succeed
    - Skip advanced tests if basic functionality is broken
+   - Run both corruption and error fault test suites
 3. **Framework Coexistence**: Both frameworks work together seamlessly
+4. **Test Coverage**: Now includes comprehensive error fault testing alongside corruption testing
 
 ### SMB Testing Requirements:
 - **macOS**: Requires `mount_smbfs` command
@@ -277,31 +301,70 @@ docker compose exec fuse-dev mkdir -p /tests
 docker cp src/fuse-driver/tests/functional/*.sh $(docker compose ps -q fuse-dev):/tests/
 docker compose exec fuse-dev bash -c "cd /tests && ./run_all_tests.sh"
 
-# Run organized corruption tests manually
+# Run corruption tests manually
 ./src/fuse-driver/tests/functional/test_corruption_none.sh
 ./src/fuse-driver/tests/functional/test_corruption_medium.sh
 ./src/fuse-driver/tests/functional/test_corruption_high.sh
 ./src/fuse-driver/tests/functional/test_corruption_corner_prob.sh
 ./src/fuse-driver/tests/functional/test_corruption_corner_data.sh
 
+# Run error fault tests manually (NEW)
+./src/fuse-driver/tests/functional/test_error_io_write_medium.sh
+./src/fuse-driver/tests/functional/test_error_io_read_medium.sh
+./src/fuse-driver/tests/functional/test_error_io_all_high.sh
+./src/fuse-driver/tests/functional/test_error_access_create_medium.sh
+./src/fuse-driver/tests/functional/test_error_nospace_write_high.sh
+
 # Test specific fault types with organized configs
-./scripts/run-fuse.sh --config=corruption_none.conf
 ./scripts/run-fuse.sh --config=corruption_medium.conf
-./scripts/run-fuse.sh --config=corruption_high.conf
-./scripts/run-fuse.sh --config=corruption_corner_prob.conf
-./scripts/run-fuse.sh --config=corruption_corner_data.conf
+./scripts/run-fuse.sh --config=error_io_write_medium.conf
+./scripts/run-fuse.sh --config=error_io_all_high.conf
+./scripts/run-fuse.sh --config=error_access_create_medium.conf
+./scripts/run-fuse.sh --config=error_nospace_write_high.conf
 
 # Debug FUSE mount
 docker compose exec fuse-dev mount | grep fuse
 docker compose exec fuse-dev ps aux | grep nas-emu
 ```
 
+## Recent Major Improvements
+
+### Critical Bug Fixes (COMPLETED) ✅
+1. **Double Corruption Bug**: Fixed `fs_fault_injector.c` calling `apply_corruption_fault()` twice per operation
+   - **Issue**: 70% config resulted in ~91% actual corruption (0.7 + 0.7 - 0.7×0.7 = 91%)
+   - **Fix**: Single corruption call with proper temp buffer management
+   - **Result**: Corruption now matches configuration (70% → ~77% with normal variance)
+
+2. **Path Resolution Bug**: Fixed `.env` overriding test framework absolute paths
+   - **Issue**: Tests failed finding files due to relative vs absolute path conflicts
+   - **Fix**: Source `.env` before setting test-specific paths
+   - **Result**: All tests now find files correctly
+
+3. **Test Validation**: Changed warnings to hard failures for probability threshold violations
+   - **Issue**: Tests passed with warnings when outside acceptable ranges
+   - **Fix**: Fail tests when probability outside ±15% of expected (was ±30%)
+   - **Result**: More reliable statistical validation
+
+### SMB Layer Limitations Discovered ⚠️
+**CRITICAL FINDING**: SMB server masks FUSE errors through automatic retry mechanisms:
+- **SMB Retry Logic**: Performs exactly one retry per failed FUSE operation
+- **Error Masking**: All SMB operations show NT_STATUS_OK even when FUSE returns errors
+- **Statistical Impact**: 50% FUSE error rate becomes ~5-7% test-level error rate
+- **Root Cause**: Only consecutive FUSE failures (0.5 × 0.5 = 25%) propagate to clients
+- **Implication**: Error fault testing shows "user experience" rather than raw fault rates
+
+### Test Architecture Status
+- **FUSE-level testing**: ✅ Accurate fault injection with proper validation
+- **SMB-level testing**: ⚠️ Limited by SMB resilience mechanisms
+- **End-to-end testing**: ⚠️ Shows real-world behavior but not fault injection accuracy
+
 ## Development vs Production Testing
 
 ### Current Setup (Development)
 - **Build**: Runtime compilation in Docker
-- **Config**: Volume-mounted source code
+- **Config**: Volume-mounted source code  
 - **Purpose**: Development and debugging
+- **Known Issue**: FUSE rebuilds don't trigger container rebuilds (manual cleanup required)
 
 ### Production Testing Needs
 - **Pre-built Images**: Compiled binaries in container

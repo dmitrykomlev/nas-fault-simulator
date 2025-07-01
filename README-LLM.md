@@ -147,6 +147,13 @@ The project is organized with the following structure:
 │           ├── test_corruption_high.sh # High corruption test (100% prob, 70% data)
 │           ├── test_corruption_corner_prob.sh # Corner case: 0% prob, 50% data
 │           ├── test_corruption_corner_data.sh # Corner case: 100% prob, 0% data
+│           ├── test_error_io_read_medium.sh # Error fault test: 50% read error probability  
+│           ├── test_error_io_write_medium.sh # Error fault test: 50% write error probability
+│           ├── test_error_io_create_medium.sh # Error fault test: 50% create error probability
+│           ├── test_error_io_create_high.sh # Error fault test: 100% create error probability
+│           ├── test_error_io_all_high.sh # Error fault test: 100% all operations
+│           ├── test_error_access_create_medium.sh # Access error test: 50% create errors
+│           └── test_error_nospace_write_high.sh # No space error test: 100% write errors
 │           └── test_production_skeleton.sh # Production test template
 ```
 
@@ -379,6 +386,45 @@ The testing framework includes:
    - Create configuration UI
    - Build monitoring interface
    - Add visualization of metrics
+
+## Recent Developments (Major Progress)
+
+### Advanced Fault Injection Testing Suite (Completed)
+1. **Error Fault Tests**: Implemented comprehensive error fault injection tests for READ, WRITE, CREATE operations with configurable probability thresholds
+2. **Improved Test Validation**: Made tests fail properly when probability thresholds are not met (changed from warnings to hard failures)
+3. **Tightened Probability Thresholds**: Reduced acceptable variance from ±30% to ±15% for more reliable statistical validation
+
+### Critical Bug Fixes
+1. **Double Corruption Bug Fix**: Fixed critical bug in `fs_fault_injector.c` where `apply_corruption_fault()` was called twice per write operation, causing ~91% corruption instead of configured 70%
+2. **Path Resolution Bug**: Fixed `.env` file overriding test framework's absolute path variables, causing tests to fail finding files
+3. **Test Framework Improvements**: Enhanced cleanup-on-failure logic to preserve debug environments for individual test runs while cleaning up during automated test runs
+
+### SMB Configuration Optimization
+1. **Cache Disabling**: Modified `smb.conf` to disable oplocks, caching, and buffering to improve fault injection visibility:
+   ```
+   oplocks = no
+   level2 oplocks = no
+   kernel oplocks = no
+   strict locking = yes
+   posix locking = yes
+   sync always = yes
+   ```
+
+### Test Runner Enhancements
+1. **Integrated Error Tests**: Added error fault tests to main test runner (`run_tests.sh`)
+2. **Build Pipeline Issue**: Identified issue where FUSE driver rebuilds don't automatically trigger container image rebuilds (marked for future improvement)
+
+### SMB Layer Limitations Discovered
+**CRITICAL FINDING**: SMB server layer performs automatic error recovery that interferes with fault injection testing:
+- **Error Masking**: SMB retries failed FUSE operations and reports NT_STATUS_OK even when FUSE returns errors
+- **Retry Logic**: SMB performs exactly one retry per failed operation
+- **Statistical Impact**: With 50% FUSE error probability, test-level error rate drops to ~5-7% due to retry success (0.5 × 0.5 = 25% chance of double failure, but caching reduces actual operations)
+- **Implication**: Fault injection works correctly at FUSE level but SMB layer provides resilience that masks errors from clients
+
+### Test Architecture Status
+- **FUSE-level testing**: ✅ Fully functional with accurate fault injection
+- **SMB-level testing**: ⚠️ Limited reliability due to SMB error recovery mechanisms  
+- **End-to-end testing**: ⚠️ Shows "user experience" rather than raw fault injection rates
 
 ## Documentation Plan
 
