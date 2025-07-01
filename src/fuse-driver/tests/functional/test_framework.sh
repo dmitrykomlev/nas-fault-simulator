@@ -73,10 +73,10 @@ cleanup_test_environment() {
         rm -rf "${TEST_DIR}" 2>/dev/null || true
     fi
     
-    # Stop container
+    # Stop container (pure docker approach)
     echo "Stopping test container..."
-    cd "${PROJECT_ROOT}"
-    docker compose down || true
+    docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+    docker rm "${CONTAINER_NAME}" 2>/dev/null || true
     
     echo -e "${GREEN}Cleanup completed${NC}"
 }
@@ -89,11 +89,20 @@ run_test_with_config() {
     
     if [ -z "$config_name" ] || [ -z "$test_name" ] || [ -z "$test_function" ]; then
         echo -e "${RED}ERROR: Missing required parameters${NC}"
-        echo "Usage: run_test_with_config \"config_name.conf\" \"test_name\" test_function"
+        echo "Usage: run_test_with_config \"config_name.conf\" \"test_name\" test_function [--cleanup-on-failure]"
         return 1
     fi
     
-    # Set up test variables
+    # Check if cleanup on failure is requested (for automated test runs)
+    local cleanup_on_failure=false
+    if [ "$CLEANUP_ON_FAILURE" = "true" ] || [[ "$*" =~ --cleanup-on-failure ]]; then
+        cleanup_on_failure=true
+    fi
+    
+    # Load environment variables from .env file with defaults first
+    source "${PROJECT_ROOT}/.env" 2>/dev/null || true
+    
+    # Set up test variables (these override .env settings)
     export TEST_NAME="$test_name"
     export CONFIG_NAME="$config_name"
     export CONTAINER_NAME="nas-fault-simulator-fuse-dev-1"
@@ -154,20 +163,51 @@ run_test_with_config() {
     mkdir -p "${HOST_MOUNT_POINT}"
     mkdir -p "${DEV_HOST_STORAGE_PATH}"
     
-    # Stop any existing container
-    docker compose down || true
+    # Stop any existing containers (pure docker approach)
+    docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+    docker rm "${CONTAINER_NAME}" 2>/dev/null || true
     
-    # Use host storage for advanced tests to allow backdoor access for verification
-    export USE_HOST_STORAGE=true
-    export DEV_HOST_STORAGE_PATH="${TEST_DIR}/nas-storage"
-    
-    # Start container with test-specific config and internal storage
+    # Build the image if it doesn't exist
     cd "${PROJECT_ROOT}"
-    export CONFIG_FILE="${CONFIG_NAME}"
-    docker compose up -d > /dev/null 2>&1
+    if ! docker images nas-fault-simulator-fuse-dev | grep -q nas-fault-simulator-fuse-dev; then
+        echo "Building container image..."
+        docker compose build fuse-dev > /dev/null 2>&1
+    fi
+    
+    # Find a free port for SMB (start from 1445)
+    local smb_port=1445
+    while netstat -ln | grep -q ":${smb_port} "; do
+        smb_port=$((smb_port + 1))
+    done
+    
+    # Environment variables already loaded at the beginning
+    
+    # Start container with dynamic config mounting using pure docker run
+    # This approach keeps the container test-agnostic while allowing test configs
+    docker run -d \
+        --name "${CONTAINER_NAME}" \
+        --privileged \
+        --cap-add SYS_ADMIN \
+        --device /dev/fuse:/dev/fuse \
+        --security-opt apparmor:unconfined \
+        -p "${smb_port}:445" \
+        -v "${TEST_DIR}/nas-storage:${NAS_STORAGE_PATH:-/var/nas-storage}" \
+        -v "${PROJECT_ROOT}/src/fuse-driver/tests/configs:/configs:ro" \
+        -e "NAS_MOUNT_POINT=${NAS_MOUNT_POINT:-/mnt/nas-mount}" \
+        -e "NAS_STORAGE_PATH=${NAS_STORAGE_PATH:-/var/nas-storage}" \
+        -e "NAS_LOG_FILE=${NAS_LOG_FILE:-/var/log/nas-emu.log}" \
+        -e "NAS_LOG_LEVEL=${NAS_LOG_LEVEL:-3}" \
+        -e "SMB_SHARE_NAME=${SMB_SHARE_NAME:-nasshare}" \
+        -e "SMB_USERNAME=${SMB_USERNAME:-nasusr}" \
+        -e "SMB_PASSWORD=${SMB_PASSWORD:-naspass}" \
+        -e "CONFIG_FILE=${CONFIG_NAME}" \
+        -e "USE_HOST_STORAGE=true" \
+        nas-fault-simulator-fuse-dev > /dev/null 2>&1
+    
     if [ $? -eq 0 ]; then
         sleep 5  # Allow services to initialize
-        report_result "Container Startup" 0 "Container with FUSE and SMB started successfully"
+        export NAS_SMB_PORT="${smb_port}"  # Update port for SMB mounting
+        report_result "Container Startup" 0 "Container with FUSE and SMB started successfully (port ${smb_port})"
     else
         report_result "Container Startup" 1 "Failed to start container with services"
         return 1
@@ -220,14 +260,28 @@ run_test_with_config() {
     echo "Tests passed: ${TESTS_PASSED}"
     echo "Tests failed: ${TESTS_FAILED}"
     
-    # Clean up test environment on normal completion
-    cleanup_test_environment
-    
+    # Decide whether to clean up based on test result and cleanup policy
     if [ ${TESTS_FAILED} -eq 0 ]; then
+        # Always clean up on success
+        cleanup_test_environment
         echo -e "${GREEN}Overall result: SUCCESS${NC}"
         return 0
     else
-        echo -e "${RED}Overall result: FAILURE (${TESTS_FAILED} failed)${NC}"
+        # On failure, only clean up if explicitly requested
+        if [ "$cleanup_on_failure" = "true" ]; then
+            cleanup_test_environment
+            echo -e "${RED}Overall result: FAILURE (${TESTS_FAILED} failed)${NC}"
+        else
+            echo -e "${YELLOW}Test environment preserved for debugging${NC}"
+            echo -e "${YELLOW}Container: ${CONTAINER_NAME}${NC}"
+            echo -e "${YELLOW}SMB mount: ${HOST_MOUNT_POINT}${NC}"
+            echo -e "${YELLOW}Storage: ${DEV_HOST_STORAGE_PATH}${NC}"
+            echo -e "${YELLOW}To clean up manually, run:${NC}"
+            echo -e "${YELLOW}  docker stop ${CONTAINER_NAME} && docker rm ${CONTAINER_NAME}${NC}"
+            echo -e "${YELLOW}  umount '${HOST_MOUNT_POINT}' 2>/dev/null || true${NC}"
+            echo -e "${YELLOW}  rm -rf '${TEST_DIR}'${NC}"
+            echo -e "${RED}Overall result: FAILURE (${TESTS_FAILED} failed)${NC}"
+        fi
         return 1
     fi
 }
