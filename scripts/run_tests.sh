@@ -44,10 +44,13 @@ fi
 # Step 4: Run advanced tests if basic tests passed
 if [ $BASIC_EXIT_CODE -eq 0 ]; then
     echo ""
-    echo "Step 4: Running advanced tests (corruption tests with SMB)..."
+    echo "Step 4: Running advanced tests (corruption & error fault tests with SMB)..."
     
     # Set environment variable to skip build in advanced tests
     export SKIP_FUSE_BUILD=true
+    
+    # For automated test runs, always cleanup on failure to avoid resource leaks
+    export CLEANUP_ON_FAILURE=true
     
     # Save current directory and ensure we're in project root
     ORIGINAL_DIR=$(pwd)
@@ -55,13 +58,29 @@ if [ $BASIC_EXIT_CODE -eq 0 ]; then
 
     # Run each advanced test (they manage their own container lifecycle)
     ADVANCED_EXIT_CODE=0
-    ADVANCED_TESTS=(
+    
+    # Corruption fault tests
+    CORRUPTION_TESTS=(
         "test_corruption_none.sh"
         "test_corruption_medium.sh" 
         "test_corruption_high.sh"
         "test_corruption_corner_prob.sh"
         "test_corruption_corner_data.sh"
     )
+    
+    # Error fault tests
+    ERROR_TESTS=(
+        "test_error_io_write_medium.sh"
+        "test_error_io_read_medium.sh"
+        "test_error_io_create_medium.sh"
+        "test_error_io_create_high.sh"
+        "test_error_io_all_high.sh"
+        "test_error_access_create_medium.sh"
+        "test_error_nospace_write_high.sh"
+    )
+    
+    # Combine all advanced tests
+    ADVANCED_TESTS=("${CORRUPTION_TESTS[@]}" "${ERROR_TESTS[@]}")
     
     for test in "${ADVANCED_TESTS[@]}"; do
         echo "Running ${test}..."
