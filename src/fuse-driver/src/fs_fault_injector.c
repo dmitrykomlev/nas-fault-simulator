@@ -33,14 +33,14 @@ static fs_config_t *config;
 static int fs_fault_getattr(const char *path, struct stat *stbuf) {
     LOG_DEBUG(">>> ENTER getattr: %s", path);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_GETATTR);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_GETATTR);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_GETATTR, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_GETATTR, &error_code)) {
         LOG_INFO("Error fault active for getattr: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT getattr: %s (error fault: %d)", path, error_code);
         return error_code;
@@ -59,14 +59,14 @@ static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                            off_t offset, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER readdir: %s (offset: %ld)", path, offset);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_READDIR);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_READDIR);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_READDIR, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_READDIR, &error_code)) {
         LOG_INFO("Error fault active for readdir: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT readdir: %s (error fault: %d)", path, error_code);
         return error_code;
@@ -84,14 +84,14 @@ static int fs_fault_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER create: %s (mode: %o)", path, mode);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_CREATE);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_CREATE);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_CREATE, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_CREATE, &error_code)) {
         LOG_INFO("Error fault active for create: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT create: %s (error fault: %d)", path, error_code);
         return error_code;
@@ -119,14 +119,14 @@ static int fs_fault_create(const char *path, mode_t mode, struct fuse_file_info 
 static int fs_fault_mknod(const char *path, mode_t mode, dev_t rdev) {
     LOG_DEBUG(">>> ENTER mknod: %s (mode: %o)", path, mode);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_MKNOD);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_MKNOD);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_MKNOD, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_MKNOD, &error_code)) {
         LOG_INFO("Error fault active for mknod: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT mknod: %s (error fault: %d)", path, error_code);
         return error_code;
@@ -144,14 +144,14 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
                         struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER read: %s (size: %zu, offset: %ld)", path, size, offset);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_READ);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_READ);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_READ, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_READ, &error_code)) {
         LOG_INFO("Error fault active for read: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT read: %s (error fault: %d)", path, error_code);
         return error_code;
@@ -189,98 +189,64 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER write: %s (size: %zu, offset: %ld)", path, size, offset);
     
-    fs_config_t *config = config_get_global();
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_WRITE);
     
-    if (!config->enable_fault_injection) {
-        LOG_DEBUG("Fault injection disabled, performing normal write");
-        return fs_op_write(path, buf, size, offset, fi);
-    }
+    // Try each fault type in order of precedence
     
-    // === PRIORITY-BASED FAULT CHECKING ===
-    // Each fault is checked independently in strict priority order
-    
-    // 1. ERROR FAULTS (Highest Priority) - Operation fails immediately
-    LOG_DEBUG("Checking error faults...");
+    // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if (apply_error_fault(FS_OP_WRITE, &error_code)) {
+    if (timing_count_fault || apply_error_fault(FS_OP_WRITE, &error_code)) {
+        LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT write: %s (error fault: %d)", path, error_code);
         return error_code;
     }
     
-    // 2. TIMING FAULTS - Operation fails due to time conditions
-    LOG_DEBUG("Checking timing faults...");
-    if (check_timing_fault(FS_OP_WRITE)) {
-        LOG_DEBUG("<<< EXIT write: %s (timing fault: %d)", path, -EIO);
-        return -EIO;
-    }
-    
-    // 3. OPERATION COUNT FAULTS - Operation fails due to count conditions  
-    LOG_DEBUG("Checking operation count faults...");
-    if (check_operation_count_fault(FS_OP_WRITE)) {
-        LOG_DEBUG("<<< EXIT write: %s (count fault: %d)", path, -EIO);
-        return -EIO;
-    }
-    
-    // 4. PERMISSION CHECK - Always validate write permissions
-    LOG_DEBUG("Checking write permissions...");
-    int res = fs_op_access(path, W_OK);
-    if (res != 0) {
-        LOG_DEBUG("<<< EXIT write: %s (permission denied: %d)", path, res);
-        return res;
-    }
-    
-    // === NON-FAILING FAULTS (Operation continues) ===
-    
-    // 5. DELAY FAULTS - Add latency but operation continues
-    LOG_DEBUG("Applying delay faults...");
+    // 2. Apply delay fault if applicable
     apply_delay_fault(FS_OP_WRITE);
     
-    // 6. PARTIAL FAULTS - Adjust operation size
-    LOG_DEBUG("Applying partial faults...");
-    size_t actual_size = apply_partial_fault(FS_OP_WRITE, size);
-    LOG_DEBUG("Size after partial fault: %zu (original: %zu)", actual_size, size);
-    
-    // 7. CORRUPTION FAULTS - Corrupt data but operation succeeds
-    LOG_DEBUG("Applying corruption faults...");
-    char *corrupted_buf = NULL;
-    
-    // Check if corruption should be applied
-    if (config->corruption_fault && 
-        config_should_affect_operation(config->corruption_fault->operations_mask, FS_OP_WRITE) &&
-        check_probability(config->corruption_fault->probability)) {
-        
-        // Create corrupted copy
-        corrupted_buf = malloc(actual_size);
-        if (corrupted_buf) {
-            memcpy(corrupted_buf, buf, actual_size);
-            // Apply corruption to our copy
-            if (apply_corruption_fault(FS_OP_WRITE, corrupted_buf, actual_size)) {
-                LOG_DEBUG("Corruption applied to buffer");
-            } else {
-                LOG_DEBUG("Corruption function failed, using original buffer");
-                free(corrupted_buf);
-                corrupted_buf = NULL;
-            }
-        } else {
-            LOG_ERROR("Failed to allocate corruption buffer, using original");
+    // Check write permission if no file handle
+    if (fi == NULL) {
+        int res = fs_op_access(path, W_OK);
+        if (res != 0) {
+            LOG_DEBUG("Write denied due to permission check: %s", path);
+            LOG_DEBUG("<<< EXIT write: %s (permission denied: %d)", path, res);
+            return res;
         }
     }
     
-    // 8. PERFORM OPERATION
+    // 3. Apply partial operation fault if applicable
+    size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    
+    // 4. Apply corruption fault if applicable
+    char *corrupted_buf = NULL;
+    // Create a temporary copy to test if corruption should be applied
+    char *temp_buf = malloc(adjusted_size);
+    if (temp_buf) {
+        memcpy(temp_buf, buf, adjusted_size);
+        if (apply_corruption_fault(FS_OP_WRITE, temp_buf, adjusted_size)) {
+            // Corruption was applied to temp_buf, use it as the corrupted buffer
+            corrupted_buf = temp_buf;
+            temp_buf = NULL; // Transfer ownership
+        } else {
+            // No corruption applied, free the temp buffer
+            free(temp_buf);
+        }
+    }
+    
+    // 5. Perform the actual operation
     const char *final_buf = corrupted_buf ? corrupted_buf : buf;
-    LOG_DEBUG("Performing write operation with %s buffer", corrupted_buf ? "corrupted" : "original");
-    res = fs_op_write(path, final_buf, actual_size, offset, fi);
+    int res = fs_op_write(path, final_buf, adjusted_size, offset, fi);
     
     // Cleanup
     if (corrupted_buf) {
         free(corrupted_buf);
     }
     
-    // Update statistics
+    // Update stats and return
     if (res > 0) {
         update_operation_stats(FS_OP_WRITE, res);
     }
-    
     LOG_DEBUG("<<< EXIT write: %s (result: %d)", path, res);
     return res;
 }
@@ -288,14 +254,14 @@ static int fs_fault_write(const char *path, const char *buf, size_t size, off_t 
 static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER open: %s (flags: 0x%x)", path, fi->flags);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_OPEN);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_OPEN);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_OPEN, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_OPEN, &error_code)) {
         LOG_DEBUG("<<< EXIT open: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -332,14 +298,14 @@ static int fs_fault_open(const char *path, struct fuse_file_info *fi) {
 static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER release: %s", path);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_RELEASE);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_RELEASE);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_RELEASE, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_RELEASE, &error_code)) {
         LOG_DEBUG("<<< EXIT release: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -355,14 +321,14 @@ static int fs_fault_release(const char *path, struct fuse_file_info *fi) {
 static int fs_fault_mkdir(const char *path, mode_t mode) {
     LOG_DEBUG(">>> ENTER mkdir: %s (mode: %o)", path, mode);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_MKDIR);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_MKDIR);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_MKDIR, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_MKDIR, &error_code)) {
         LOG_DEBUG("<<< EXIT mkdir: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -378,14 +344,14 @@ static int fs_fault_mkdir(const char *path, mode_t mode) {
 static int fs_fault_rmdir(const char *path) {
     LOG_DEBUG(">>> ENTER rmdir: %s", path);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_RMDIR);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_RMDIR);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_RMDIR, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_RMDIR, &error_code)) {
         LOG_DEBUG("<<< EXIT rmdir: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -401,14 +367,14 @@ static int fs_fault_rmdir(const char *path) {
 static int fs_fault_unlink(const char *path) {
     LOG_DEBUG(">>> ENTER unlink: %s", path);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_UNLINK);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_UNLINK);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_UNLINK, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_UNLINK, &error_code)) {
         LOG_DEBUG("<<< EXIT unlink: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -424,14 +390,14 @@ static int fs_fault_unlink(const char *path) {
 static int fs_fault_rename(const char *path, const char *newpath) {
     LOG_DEBUG(">>> ENTER rename: %s to %s", path, newpath);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_RENAME);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_RENAME);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_RENAME, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_RENAME, &error_code)) {
         LOG_DEBUG("<<< EXIT rename: %s to %s (error fault: %d)", path, newpath, error_code);
         return error_code;
     }
@@ -447,14 +413,14 @@ static int fs_fault_rename(const char *path, const char *newpath) {
 static int fs_fault_access(const char *path, int mode) {
     LOG_DEBUG(">>> ENTER access: %s (mode: %d)", path, mode);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_ACCESS);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_ACCESS);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_ACCESS, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_ACCESS, &error_code)) {
         LOG_DEBUG("<<< EXIT access: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -470,14 +436,14 @@ static int fs_fault_access(const char *path, int mode) {
 static int fs_fault_chmod(const char *path, mode_t mode) {
     LOG_DEBUG(">>> ENTER chmod: %s (mode: %o)", path, mode);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_CHMOD);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_CHMOD);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_CHMOD, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_CHMOD, &error_code)) {
         LOG_DEBUG("<<< EXIT chmod: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -500,14 +466,14 @@ static int fs_fault_chmod(const char *path, mode_t mode) {
 static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
     LOG_DEBUG(">>> ENTER chown: %s (uid: %d, gid: %d)", path, uid, gid);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_CHOWN);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_CHOWN);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_CHOWN, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_CHOWN, &error_code)) {
         LOG_DEBUG("<<< EXIT chown: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -530,14 +496,14 @@ static int fs_fault_chown(const char *path, uid_t uid, gid_t gid) {
 static int fs_fault_truncate(const char *path, off_t size) {
     LOG_DEBUG(">>> ENTER truncate: %s (size: %ld)", path, size);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_TRUNCATE);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_TRUNCATE);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_TRUNCATE, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_TRUNCATE, &error_code)) {
         LOG_DEBUG("<<< EXIT truncate: %s (error fault: %d)", path, error_code);
         return error_code;
     }
@@ -560,14 +526,14 @@ static int fs_fault_truncate(const char *path, off_t size) {
 static int fs_fault_utimens(const char *path, const struct timespec ts[2]) {
     LOG_DEBUG(">>> ENTER utimens: %s", path);
     
-    // First check if any timing or operation count conditions would trigger a fault
-    bool should_fault = should_trigger_fault(FS_OP_UTIMENS);
+    // Check timing/count-based faults first
+    bool timing_count_fault = should_trigger_fault(FS_OP_UTIMENS);
     
     // Try each fault type in order of precedence
     
     // 1. Try error fault (highest precedence - returns error to caller)
     int error_code = -EIO;
-    if ((should_fault || apply_error_fault(FS_OP_UTIMENS, &error_code))) {
+    if (timing_count_fault || apply_error_fault(FS_OP_UTIMENS, &error_code)) {
         LOG_DEBUG("<<< EXIT utimens: %s (error fault: %d)", path, error_code);
         return error_code;
     }

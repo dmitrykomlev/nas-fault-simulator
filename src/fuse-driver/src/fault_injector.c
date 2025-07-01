@@ -75,7 +75,7 @@ bool check_probability(float probability) {
 bool check_timing_fault(fs_op_type_t operation) {
     fs_config_t *config = config_get_global();
     
-    if (!config->timing_fault || !config->timing_fault->enabled) {
+    if (!config->enable_fault_injection || !config->timing_fault || !config->timing_fault->enabled) {
         return false;
     }
     
@@ -107,7 +107,7 @@ bool check_timing_fault(fs_op_type_t operation) {
 bool check_operation_count_fault(fs_op_type_t operation) {
     fs_config_t *config = config_get_global();
     
-    if (!config->operation_count_fault || !config->operation_count_fault->enabled) {
+    if (!config->enable_fault_injection || !config->operation_count_fault || !config->operation_count_fault->enabled) {
         return false;
     }
     
@@ -139,7 +139,7 @@ bool check_operation_count_fault(fs_op_type_t operation) {
 bool apply_error_fault(fs_op_type_t operation, int *error_code) {
     fs_config_t *config = config_get_global();
     
-    if (!config->error_fault) {
+    if (!config->enable_fault_injection || !config->error_fault) {
         return false;
     }
     
@@ -165,7 +165,7 @@ bool apply_delay_fault(fs_op_type_t operation) {
     fs_config_t *config = config_get_global();
     //LOG_INFO("apply_delay_fault: Got config");
     
-    if (!config->delay_fault) {
+    if (!config->enable_fault_injection || !config->delay_fault) {
         //LOG_INFO("apply_delay_fault: No delay_fault config, returning false");
         return false;
     }
@@ -199,7 +199,7 @@ bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size) {
     LOG_DEBUG("=== CORRUPTION FAULT CHECK for %s ===", fs_op_names[operation]);
     LOG_DEBUG("Buffer: %p, Size: %zu", buffer, size);
     
-    if (!config->corruption_fault) {
+    if (!config->enable_fault_injection || !config->corruption_fault) {
         LOG_DEBUG("Corruption fault: config->corruption_fault is NULL");
         return false;
     }
@@ -286,7 +286,7 @@ bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size) {
 size_t apply_partial_fault(fs_op_type_t operation, size_t original_size) {
     fs_config_t *config = config_get_global();
     
-    if (!config->partial_fault || original_size == 0) {
+    if (!config->enable_fault_injection || !config->partial_fault || original_size == 0) {
         return original_size;
     }
     
