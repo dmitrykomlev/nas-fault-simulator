@@ -11,13 +11,13 @@ echo "=================================================="
 echo "NAS Fault Simulator - Full Test Suite"
 echo "=================================================="
 
-# Step 1: Build FUSE driver once for all tests
-echo "Step 1: Building FUSE driver..."
-${SCRIPT_DIR}/build-fuse.sh
+# Step 1: Build Docker image once for all tests
+echo "Step 1: Building Docker image with FUSE driver..."
+${SCRIPT_DIR}/build.sh
 if [ $? -eq 0 ]; then
-    echo -e "\033[0;32mFUSE driver built successfully\033[0m"
+    echo -e "\033[0;32mDocker image built successfully\033[0m"
 else
-    echo -e "\033[0;31mFUSE driver build failed - aborting tests\033[0m"
+    echo -e "\033[0;31mDocker image build failed - aborting tests\033[0m"
     exit 1
 fi
 
@@ -27,14 +27,15 @@ ${SCRIPT_DIR}/run-fuse.sh --config=no_faults.conf
 
 # Step 3: Copy basic test scripts into container and run them
 echo "Step 3: Running basic functional tests..."
-docker compose exec fuse-dev mkdir -p /tests
-docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/run_all_tests.sh" $(docker compose ps -q fuse-dev):/tests/
-docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_helpers.sh" $(docker compose ps -q fuse-dev):/tests/
-docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_basic_ops.sh" $(docker compose ps -q fuse-dev):/tests/
-docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_large_file_ops.sh" $(docker compose ps -q fuse-dev):/tests/
+CONTAINER_NAME="nas-fault-simulator"
+docker exec "${CONTAINER_NAME}" mkdir -p /tests
+docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/run_all_tests.sh" "${CONTAINER_NAME}:/tests/"
+docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_helpers.sh" "${CONTAINER_NAME}:/tests/"
+docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_basic_ops.sh" "${CONTAINER_NAME}:/tests/"
+docker cp "${PROJECT_ROOT}/src/fuse-driver/tests/functional/test_large_file_ops.sh" "${CONTAINER_NAME}:/tests/"
 
 BASIC_EXIT_CODE=0
-if ! docker compose exec fuse-dev bash -c "cd /tests && ./run_all_tests.sh"; then
+if ! docker exec "${CONTAINER_NAME}" bash -c "cd /tests && ./run_all_tests.sh"; then
     echo -e "\033[0;31mBasic functional tests FAILED\033[0m"
     BASIC_EXIT_CODE=1
 else
@@ -44,13 +45,21 @@ fi
 # Step 4: Run advanced tests if basic tests passed
 if [ $BASIC_EXIT_CODE -eq 0 ]; then
     echo ""
-    echo "Step 4: Running advanced tests (corruption & error fault tests with SMB)..."
+    echo "Step 4: Stopping basic test container and running advanced tests..."
+    
+    # Stop the basic test container to free up resources
+    echo "Stopping basic test container..."
+    docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+    docker rm "${CONTAINER_NAME}" 2>/dev/null || true
+    
+    echo "Running advanced tests (corruption & error fault tests with SMB)..."
     
     # Set environment variable to skip build in advanced tests
-    export SKIP_FUSE_BUILD=true
+    export SKIP_BUILD=true
     
-    # For automated test runs, always cleanup on failure to avoid resource leaks
-    export CLEANUP_ON_FAILURE=true
+    # Default behavior: cleanup on failure to prevent cascade failures
+    # Set PRESERVE_ON_FAILURE=true to debug individual test failures
+    export PRESERVE_ON_FAILURE=${PRESERVE_ON_FAILURE:-false}
     
     # Save current directory and ensure we're in project root
     ORIGINAL_DIR=$(pwd)
@@ -89,6 +98,14 @@ if [ $BASIC_EXIT_CODE -eq 0 ]; then
         else
             echo -e "\033[0;31m${test} FAILED\033[0m"
             ADVANCED_EXIT_CODE=1
+            
+            # If test environment is preserved, stop running subsequent tests
+            # to avoid cascade failures due to resource conflicts
+            if [ "$PRESERVE_ON_FAILURE" = "true" ]; then
+                echo -e "\033[0;33mStopping test execution due to failure with environment preservation enabled\033[0m"
+                echo -e "\033[0;33mClean up the failed test environment before running remaining tests\033[0m"
+                break
+            fi
         fi
         echo ""
     done

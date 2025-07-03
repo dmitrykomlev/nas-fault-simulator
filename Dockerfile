@@ -1,4 +1,31 @@
-FROM ubuntu:22.04
+# Multi-stage build for NAS Fault Simulator
+# Build stage - compile FUSE driver
+FROM ubuntu:22.04 AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    fuse \
+    libfuse-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set build-time environment variables
+ENV NAS_MOUNT_POINT=/mnt/nas-mount \
+    NAS_STORAGE_PATH=/var/nas-storage \
+    NAS_LOG_FILE=/var/log/nas-emu.log \
+    NAS_LOG_LEVEL=2
+
+# Copy source code
+WORKDIR /app/src/fuse-driver
+COPY src/fuse-driver/src/ ./src/
+COPY src/fuse-driver/Makefile ./
+
+# Build the FUSE driver
+RUN make clean && make
+
+# Runtime stage - final image
+FROM ubuntu:22.04 AS runtime
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
@@ -30,15 +57,15 @@ RUN mkdir -p ${NAS_MOUNT_POINT} && \
     mkdir -p /configs && \
     useradd -m ${SMB_USERNAME}
 
+# Copy built FUSE binary from builder stage
+COPY --from=builder /app/src/fuse-driver/nas-emu-fuse /usr/local/bin/nas-emu-fuse
+RUN chmod +x /usr/local/bin/nas-emu-fuse
+
 # Copy SMB configuration template
 COPY src/fuse-driver/docker/smb.conf /etc/samba/smb.conf.template
 
-# Copy configuration files instead of mounting
+# Copy test configuration files
 COPY src/fuse-driver/tests/configs/ /configs/
-
-# Copy only the built FUSE binary (built by build container)
-COPY src/fuse-driver/nas-emu-fuse /usr/local/bin/nas-emu-fuse
-RUN chmod +x /usr/local/bin/nas-emu-fuse
 
 # Copy and setup entrypoint script
 COPY src/fuse-driver/docker/entrypoint.sh /entrypoint.sh

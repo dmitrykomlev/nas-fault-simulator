@@ -93,10 +93,12 @@ run_test_with_config() {
         return 1
     fi
     
-    # Check if cleanup on failure is requested (for automated test runs)
-    local cleanup_on_failure=false
-    if [ "$CLEANUP_ON_FAILURE" = "true" ] || [[ "$*" =~ --cleanup-on-failure ]]; then
-        cleanup_on_failure=true
+    # Check cleanup on failure policy (default: always cleanup)
+    local cleanup_on_failure=true
+    if [ "$PRESERVE_ON_FAILURE" = "true" ] || [[ "$*" =~ --preserve-on-failure ]]; then
+        cleanup_on_failure=false
+        echo -e "${YELLOW}Warning: Test environment will be preserved on failure for debugging${NC}"
+        echo -e "${YELLOW}This may cause subsequent tests to fail due to resource conflicts${NC}"
     fi
     
     # Load environment variables from .env file with defaults first
@@ -105,7 +107,7 @@ run_test_with_config() {
     # Set up test variables (these override .env settings)
     export TEST_NAME="$test_name"
     export CONFIG_NAME="$config_name"
-    export CONTAINER_NAME="nas-fault-simulator-fuse-dev-1"
+    export CONTAINER_NAME="nas-fault-simulator-${test_name}"
     
     # Test-specific directory structure (SMB mount and storage backdoor)
     export TEST_DIR="${PROJECT_ROOT}/tests-${test_name}"
@@ -138,21 +140,44 @@ run_test_with_config() {
     # Set cleanup trap only for interruptions (not normal exit)
     trap cleanup_test_environment INT TERM
     
-    # Step 1: Build FUSE driver (unless skip is requested)
-    if [ "${SKIP_FUSE_BUILD}" != "true" ]; then
-        echo -e "\n${YELLOW}Step 1: Building FUSE driver...${NC}"
+    # Step 1: Build Docker image (unless skip is requested)
+    if [ "${SKIP_BUILD}" != "true" ]; then
+        echo -e "\n${YELLOW}Step 1: Building Docker image with FUSE driver...${NC}"
         cd "${PROJECT_ROOT}"
         
-        "${PROJECT_ROOT}/scripts/build-fuse.sh" > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            report_result "FUSE Build" 0 "FUSE driver built successfully"
+        # Check if image needs rebuilding by comparing source modification times
+        local needs_rebuild=false
+        if ! docker images nas-fault-simulator-fuse-dev | grep -q nas-fault-simulator-fuse-dev; then
+            needs_rebuild=true
+            echo "Image not found, rebuild required"
         else
-            report_result "FUSE Build" 1 "FUSE driver build failed"
-            return 1
+            # Check if source files are newer than image
+            local image_created=$(docker inspect nas-fault-simulator-fuse-dev --format='{{.Created}}' 2>/dev/null)
+            if [ -n "$image_created" ]; then
+                local image_timestamp=$(date -d "$image_created" +%s)
+                local source_timestamp=$(find src/fuse-driver/src/ -name "*.c" -o -name "*.h" -o -name "Makefile" | xargs stat -c %Y | sort -n | tail -1)
+                if [ "$source_timestamp" -gt "$image_timestamp" ]; then
+                    needs_rebuild=true
+                    echo "Source files newer than image, rebuild required"
+                fi
+            fi
+        fi
+        
+        if [ "$needs_rebuild" = "true" ]; then
+            docker build -t nas-fault-simulator-fuse-dev . > /dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                report_result "Docker Build" 0 "Docker image built successfully"
+            else
+                report_result "Docker Build" 1 "Docker image build failed"
+                return 1
+            fi
+        else
+            echo "Image up-to-date, skipping rebuild"
+            report_result "Docker Build" 0 "Docker image up-to-date"
         fi
     else
-        echo -e "\n${YELLOW}Step 1: Skipping FUSE build (already built)${NC}"
-        report_result "FUSE Build" 0 "FUSE driver build skipped (pre-built)"
+        echo -e "\n${YELLOW}Step 1: Skipping build (already built)${NC}"
+        report_result "Docker Build" 0 "Docker build skipped (pre-built)"
     fi
     
     # Step 2: Start container with FUSE and SMB services
@@ -167,12 +192,7 @@ run_test_with_config() {
     docker stop "${CONTAINER_NAME}" 2>/dev/null || true
     docker rm "${CONTAINER_NAME}" 2>/dev/null || true
     
-    # Build the image if it doesn't exist
-    cd "${PROJECT_ROOT}"
-    if ! docker images nas-fault-simulator-fuse-dev | grep -q nas-fault-simulator-fuse-dev; then
-        echo "Building container image..."
-        docker compose build fuse-dev > /dev/null 2>&1
-    fi
+    # Container image already built in Step 1 or verified up-to-date
     
     # Find a free port for SMB (start from 1445)
     local smb_port=1445
@@ -210,6 +230,8 @@ run_test_with_config() {
         report_result "Container Startup" 0 "Container with FUSE and SMB started successfully (port ${smb_port})"
     else
         report_result "Container Startup" 1 "Failed to start container with services"
+        # Clean up on early failure to prevent resource conflicts
+        cleanup_test_environment
         return 1
     fi
     
@@ -233,6 +255,8 @@ run_test_with_config() {
         report_result "SMB Mount" 0 "SMB share mounted successfully"
     else
         report_result "SMB Mount" 1 "Failed to mount SMB share"
+        # Clean up on early failure to prevent resource conflicts
+        cleanup_test_environment
         return 1
     fi
     
@@ -244,6 +268,8 @@ run_test_with_config() {
         report_result "Test Logic" 0 "User test completed successfully"
     else
         report_result "Test Logic" 1 "User test failed"
+        # Clean up on early failure to prevent resource conflicts
+        cleanup_test_environment
         return 1
     fi
     
@@ -267,7 +293,7 @@ run_test_with_config() {
         echo -e "${GREEN}Overall result: SUCCESS${NC}"
         return 0
     else
-        # On failure, only clean up if explicitly requested
+        # On failure, clean up unless preservation is explicitly requested
         if [ "$cleanup_on_failure" = "true" ]; then
             cleanup_test_environment
             echo -e "${RED}Overall result: FAILURE (${TESTS_FAILED} failed)${NC}"

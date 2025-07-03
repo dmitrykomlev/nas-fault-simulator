@@ -16,10 +16,22 @@ find . -name "README-LLM*.md" -exec echo "=== {} ===" \; -exec cat {} \;
 ```
 
 ## Build & Test Commands
-- Build FUSE driver: `./scripts/build-fuse.sh` 
-- Run FUSE filesystem: `./scripts/run-fuse.sh`
+- Build Docker image: `./scripts/build.sh`
+- Run FUSE filesystem: `./scripts/run-fuse.sh --config=CONFIG_FILE`
 - Run all tests: `./scripts/run_tests.sh`
-- Run single test: `docker-compose exec fuse-dev bash -c "cd /app/src/fuse-driver/tests/functional && ./test_basic_ops.sh"`
+- Run tests with debugging: `PRESERVE_ON_FAILURE=true ./scripts/run_tests.sh`
+- Run single test: `bash ./src/fuse-driver/tests/functional/test_name.sh`
+- Simple end-user runner: `./run-nas-simulator.sh --config=CONFIG_FILE`
+- Stop container: `docker stop CONTAINER_NAME`
+
+## Build System
+- **Pure Docker approach**: No docker-compose, uses `docker run` for all operations
+- **Multi-stage Docker build**: FUSE driver compiled in builder stage, runtime image with no build tools
+- **Automatic rebuild detection**: Tests check source modification times vs image timestamp
+- **Clean host**: No build artifacts remain on host filesystem
+- **Dynamic ports**: SMB ports allocated automatically to avoid conflicts
+- **Container isolation**: Each test uses unique container name (`nas-fault-simulator-${test_name}`)
+- **Resource cleanup**: Failed containers cleaned up by default to prevent cascade failures
 
 ## Code Style Guidelines
 - Language: C for FUSE driver implementation
@@ -35,3 +47,11 @@ find . -name "README-LLM*.md" -exec echo "=== {} ===" \; -exec cat {} \;
 ## Environment
 - Development in Docker container
 - Configuration via environment variables and config files
+
+## Recent Improvements (2025-07-03)
+- **Docker Architecture Migration**: Migrated from docker-compose to pure Docker approach
+- **Container Cleanup Fixes**: Fixed cascade test failures by ensuring proper cleanup on all failure scenarios
+- **Test Framework Reliability**: Added early cleanup in test framework for SMB mount failures, container startup failures
+- **Resource Conflict Prevention**: Changed default behavior to cleanup failed containers, use PRESERVE_ON_FAILURE=true for debugging
+- **Legacy File Cleanup**: Removed obsolete docker-compose files and unused mount/unmount scripts
+- **End-User Experience**: Added simple run-nas-simulator.sh script for future web interface integration

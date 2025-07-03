@@ -35,9 +35,11 @@ The configuration system is organized as follows:
 /nas-fault-simulator/
 ├── .env                        # Primary configuration file
 ├── .env.local                  # Optional local overrides (not tracked in git)
+├── Dockerfile                  # Multi-stage build using config
+├── run-nas-simulator.sh        # End-user script
 ├── /scripts
 │   ├── config.sh               # Shell configuration loader
-│   ├── build-fuse.sh           # Build script using config
+│   ├── build.sh                # Build script using config
 │   ├── run-fuse.sh             # Run script using config
 │   └── run_tests.sh            # Test script using config
 ├── /src
@@ -49,7 +51,7 @@ The configuration system is organized as follows:
 │   │   └── /tests
 │   │       └── /functional
 │   │           └── test_helpers.sh  # Test helpers using config
-└── docker-compose.yml          # Docker composition using config
+└── /nas-storage                # Local storage directory
 ```
 
 ## Configuration Components
@@ -158,46 +160,40 @@ void config_init(fs_config_t *config) {
 
 ### 4. Docker Configuration
 
-The Docker Compose file uses environment variables for consistent configuration:
+The pure Docker approach uses environment variables for configuration:
 
-```yaml
-version: '3'
-
-services:
-  fuse-dev:
-    build:
-      context: .
-      dockerfile: src/fuse-driver/docker/Dockerfile.dev
-    privileged: true  # Needed for FUSE
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - .:/app
-      # Don't pre-mount anything at the FUSE mount point
-      - ${DEV_HOST_STORAGE_PATH:-./nas-storage}:${NAS_STORAGE_PATH:-/var/nas-storage}
-    env_file:
-      - .env
-    environment:
-      - NAS_MOUNT_POINT=${NAS_MOUNT_POINT:-/mnt/nas-mount}
-      - NAS_STORAGE_PATH=${NAS_STORAGE_PATH:-/var/nas-storage}
-      - NAS_LOG_FILE=${NAS_LOG_FILE:-/var/log/nas-emu.log}
-      - NAS_LOG_LEVEL=${NAS_LOG_LEVEL:-2}
-    ports:
-      - "${NAS_SMB_PORT:-1445}:445"   # SMB port (for future SMB server)
+```bash
+# Pure docker run command with environment variables
+docker run -d \
+    --name "nas-fault-simulator" \
+    --privileged \
+    --cap-add SYS_ADMIN \
+    --device /dev/fuse:/dev/fuse \
+    --security-opt apparmor:unconfined \
+    -p "${SMB_PORT}:445" \
+    -v "${PROJECT_ROOT}/nas-storage:/var/nas-storage" \
+    -v "${PROJECT_ROOT}/src/fuse-driver/tests/configs:/configs:ro" \
+    -e "CONFIG_FILE=${CONFIG_FILE}" \
+    -e "NAS_MOUNT_POINT=/mnt/nas-mount" \
+    -e "NAS_STORAGE_PATH=/var/nas-storage" \
+    -e "NAS_LOG_FILE=/var/log/nas-emu.log" \
+    -e "NAS_LOG_LEVEL=3" \
+    -e "SMB_SHARE_NAME=nasshare" \
+    -e "SMB_USERNAME=nasusr" \
+    -e "SMB_PASSWORD=naspass" \
+    -e "USE_HOST_STORAGE=true" \
+    nas-fault-simulator-fuse-dev
 ```
 
 ## Configuration Flow
 
-1. **Environment Variables** are defined in `.env` and loaded by Docker Compose
-2. **Docker Container** receives these variables and shares them with all processes
+1. **Environment Variables** are defined in `.env` and loaded by shell scripts
+2. **Docker Container** receives these variables via `-e` flags in `docker run`
 3. **Shell Scripts** source `config.sh` to obtain configuration values
 4. **C Code** accesses environment variables via `getenv()` calls in `config.c`
 5. **Command-line Arguments** can override environment variables when specified
 6. **Local Environment Overrides** in `.env.local` (if present) take precedence over `.env`
+7. **Dynamic Configuration**: Ports and container names allocated automatically
 
 ## Storage Paths Explained
 
@@ -227,18 +223,22 @@ Client → /mnt/nas-mount (FUSE) → FUSE driver → /var/nas-storage (container
 
 The project provides several scripts that leverage the configuration system:
 
-### build-fuse.sh
-Builds the FUSE driver inside the Docker container, using the configured paths.
+### build.sh
+Builds the multi-stage Docker image with FUSE driver compiled inside.
 
 ### run-fuse.sh
-Mounts the FUSE filesystem, using the configured mount point and storage path. It includes logic to:
-- Check if the FUSE filesystem is already mounted
-- Detect and handle stale mounts
-- Create the mount point directory if needed
-- Pass the configuration parameters to the FUSE driver
+Starts a Docker container with FUSE filesystem, using pure `docker run`. It includes logic to:
+- Auto-build image if missing
+- Stop any existing containers with same name
+- Find free SMB ports automatically
+- Mount only essential directories
+- Pass configuration parameters via environment variables
 
 ### run_tests.sh
-Runs the functional tests, ensuring the FUSE driver is built and mounted correctly first.
+Runs the complete test suite (basic + advanced tests), managing container lifecycle.
+
+### run-nas-simulator.sh
+Simple end-user script for running the NAS simulator with default configuration.
 
 ## Troubleshooting Configuration Issues
 
@@ -260,7 +260,7 @@ Common configuration issues and solutions:
 **Solution**:
 - Check that the directories exist: `mkdir -p ${NAS_STORAGE_PATH}`
 - Verify permissions: `chmod -R 755 ${NAS_STORAGE_PATH}`
-- Check the paths are correctly mounted in Docker: `docker-compose exec fuse-dev mount`
+- Check the paths are correctly mounted in Docker: `docker exec nas-fault-simulator mount`
 
 ### 3. Docker Volume Mounting Problems
 
@@ -276,10 +276,10 @@ Common configuration issues and solutions:
 **Symptoms**: FUSE mount point exists but files are not visible.
 
 **Solution**:
-- Verify FUSE is running: `docker-compose exec fuse-dev ps aux | grep nas-emu-fuse`
-- Check FUSE logs: `docker-compose exec fuse-dev cat ${NAS_LOG_FILE}`
-- Manually mount FUSE: `docker-compose exec fuse-dev /app/src/fuse-driver/nas-emu-fuse "${NAS_MOUNT_POINT}" -f -d`
-- Look for error messages: `docker-compose exec fuse-dev dmesg | tail`
+- Verify FUSE is running: `docker exec nas-fault-simulator ps aux | grep nas-emu-fuse`
+- Check FUSE logs: `docker exec nas-fault-simulator cat ${NAS_LOG_FILE}`
+- Check container logs: `docker logs nas-fault-simulator`
+- Look for error messages: `docker exec nas-fault-simulator dmesg | tail`
 
 ## Future Enhancements
 

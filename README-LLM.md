@@ -94,19 +94,17 @@ The project is organized with the following structure:
 
 ```
 /nas-fault-simulator/
-├── docker-compose.yml               # Main runtime Docker Compose file
-├── docker-compose.build.yml         # Build-specific Docker Compose file  
-├── .env                             # Environment variables for Docker Compose
+├── Dockerfile                       # Multi-stage Docker build (builder + runtime)
+├── .env                             # Environment variables for configuration
 ├── CLAUDE.md                        # Claude Code assistant instructions
 ├── README-LLM.md                    # This context document
 ├── README-LLM-CONF.md               # Configuration system documentation
+├── run-nas-simulator.sh             # Simple end-user script
 ├── /scripts/                       # Build and run scripts
 │   ├── config.sh                    # Central configuration loader
-│   ├── build-fuse.sh                # Build FUSE driver using build container
+│   ├── build.sh                     # Multi-stage Docker build
 │   ├── run-fuse.sh                  # Run FUSE driver with SMB services
-│   ├── run_tests.sh                 # Run all tests (basic + corruption)
-│   ├── mount-smb.sh                 # Helper to mount SMB share
-│   └── umount-smb.sh                # Helper to unmount SMB share
+│   └── run_tests.sh                 # Run all tests (basic + advanced)
 ├── /src/fuse-driver/                # FUSE filesystem implementation
 │   ├── README-LLM-FUSE.md           # Detailed FUSE driver documentation  
 │   ├── nas-emu-fuse.conf            # Default FUSE driver configuration
@@ -123,8 +121,6 @@ The project is organized with the following structure:
 │   │   ├── log.c                    # Logging system implementation
 │   │   └── log.h                    # Logging system interface
 │   ├── /docker/                     # Docker configurations
-│   │   ├── Dockerfile.build         # Build-time container (compilation)
-│   │   ├── Dockerfile.runtime       # Runtime container (testing)
 │   │   ├── smb.conf                 # Samba configuration
 │   │   └── entrypoint.sh            # Container startup script
 │   └── /tests/                      # Test suites
@@ -212,31 +208,17 @@ The project is organized with the following structure:
 
 ## Technical Debt / Future Improvements
 
-### Docker Volume Mount Strategy
+### Docker Architecture (RESOLVED)
 
-**Current Issue**: The entire project directory is mounted to the container (`- .:/app` in docker-compose.yml).
+**Previous Issue**: Docker-compose complexity and circular mount problems.
 
-**Problems**:
-- Exposes unnecessary files to container (documentation, git files, etc.)
-- Creates dependencies on host filesystem structure
-- **Circular Mount Issue**: When SMB shares are mounted on host in project subdirectories (like `./smb-mount`), they get exposed back to the container through the `.:/app` mount, creating circular dependencies that cause SMB operation hangs
-- Security concern - container has access to entire codebase
-
-**Circular Mount Problem Details**:
-1. Host creates `nas-storage/` and `smb-mount/` directories in project root
-2. Container exposes SMB share from internal storage  
-3. Host mounts SMB share to `./smb-mount/`
-4. Container sees the mounted SMB share through the `.:/app` volume mount
-5. This creates a circular dependency causing SMB operation hangs
-
-**Preferred Approach**: 
-- Copy only essential files to container during build
-- Use multi-stage Docker builds to separate build and runtime dependencies
-- Mount only specific directories needed at runtime (e.g., configs, storage)
-- Use Docker COPY instructions instead of volume mounts for static files
-- **Critical**: Avoid mounting entire project directory in runtime to prevent circular mount issues
-
-**Current Workaround**: `.dockerignore` file added to exclude problematic directories from build context.
+**Solution Implemented**:
+- ✅ **Pure Docker approach**: Removed docker-compose entirely
+- ✅ **Multi-stage builds**: Builder stage compiles, runtime stage executes
+- ✅ **Selective mounting**: Only essential directories mounted at runtime
+- ✅ **Dynamic configuration**: Automatic port allocation and container naming
+- ✅ **Clean separation**: No circular mount dependencies
+- ✅ **End-user simplification**: Single command for operation
 
 ## Configuration System
 
@@ -263,10 +245,11 @@ See README-LLM-CONF.md for detailed information about the configuration system.
 
 **Recommendation**: Choose ONE configuration source:
 - **Option A**: Config file only (recommended for complex scenarios)
-- **Option B**: Command line only (recommended for simple deployments)
+- **Option B**: Command line only (recommended for simple deployments)  
 - **Option C**: Environment variables only (recommended for containerized deployments)
+- **Option D**: Web interface (planned for end-user experience)
 
-**Future Fix**: Redesign the configuration system to use a single source of truth with clear precedence rules documented and tested.
+**Future Fix**: Web interface will provide the primary configuration method for end users, with config files retained for development/testing.
 
 ## Docker Environment
 
@@ -274,8 +257,9 @@ The project uses Docker for consistent development environments and deployment:
 
 ### Docker Components
 
-- **Docker Compose**: Defines the main services and their dependencies
-- **Docker Container**: Provides a consistent environment with all necessary dependencies
+- **Multi-stage Dockerfile**: Builder stage compiles FUSE driver, runtime stage runs services
+- **Pure Docker approach**: Uses `docker run` commands instead of docker-compose
+- **Dynamic port allocation**: Automatically finds free ports to avoid conflicts
 - **FUSE Driver Container**: Runs with privileged mode to enable FUSE filesystem mounting
 
 ### Docker Requirements
@@ -288,9 +272,10 @@ The project uses Docker for consistent development environments and deployment:
 ### Development Workflow with Docker
 
 1. **Local Development**: Edit code on host machine using any editor
-2. **Build Process**: Use `./scripts/build-fuse.sh` to build inside Docker
+2. **Build Process**: Use `./scripts/build.sh` for multi-stage Docker build
 3. **Running**: Use `./scripts/run-fuse.sh` to run the FUSE driver
-4. **Testing**: Use `./scripts/run_tests.sh` to run functional tests inside Docker
+4. **Testing**: Use `./scripts/run_tests.sh` to run functional tests
+5. **End-User**: Use `./run-nas-simulator.sh` for simple operation
 
 ## Current Implementation Details
 
@@ -389,6 +374,19 @@ The testing framework includes:
 
 ## Recent Developments (Major Progress)
 
+### Docker Architecture Migration (2025-07-03) - COMPLETED ✅
+1. **Pure Docker Approach**: Migrated from docker-compose to pure `docker run` commands for all operations
+2. **Container Isolation**: Each test uses unique container names (`nas-fault-simulator-${test_name}`) preventing conflicts
+3. **Resource Cleanup**: Fixed cascade test failures by ensuring cleanup on all failure scenarios (SMB mount, container startup, test logic)
+4. **Legacy Removal**: Removed docker-compose.yml, build-fuse.sh, mount-smb.sh, umount-smb.sh, and Dockerfile variants
+5. **End-User Simplification**: Added run-nas-simulator.sh for simple operation, preparing for web interface
+
+### Test Framework Reliability Fixes (2025-07-03) - COMPLETED ✅
+1. **Cascade Failure Prevention**: Fixed issue where failed tests left containers running, causing all subsequent tests to fail
+2. **Early Cleanup Logic**: Added cleanup on early returns from SMB mount failures, container startup failures, and test logic failures  
+3. **Default Cleanup Behavior**: Changed default to cleanup failed containers; use `PRESERVE_ON_FAILURE=true` for debugging
+4. **Container Naming**: Standardized unique container names to prevent port conflicts during parallel or sequential testing
+
 ### Advanced Fault Injection Testing Suite (Completed)
 1. **Error Fault Tests**: Implemented comprehensive error fault injection tests for READ, WRITE, CREATE operations with configurable probability thresholds
 2. **Improved Test Validation**: Made tests fail properly when probability thresholds are not met (changed from warnings to hard failures)
@@ -412,7 +410,7 @@ The testing framework includes:
 
 ### Test Runner Enhancements
 1. **Integrated Error Tests**: Added error fault tests to main test runner (`run_tests.sh`)
-2. **Build Pipeline Issue**: Identified issue where FUSE driver rebuilds don't automatically trigger container image rebuilds (marked for future improvement)
+2. **Container Lifecycle Management**: Fixed basic test container cleanup before advanced tests to prevent resource conflicts
 
 ### SMB Layer Limitations Discovered
 **CRITICAL FINDING**: SMB server layer performs automatic error recovery that interferes with fault injection testing:
@@ -425,6 +423,7 @@ The testing framework includes:
 - **FUSE-level testing**: ✅ Fully functional with accurate fault injection
 - **SMB-level testing**: ⚠️ Limited reliability due to SMB error recovery mechanisms  
 - **End-to-end testing**: ⚠️ Shows "user experience" rather than raw fault injection rates
+- **Container Management**: ✅ Reliable isolation and cleanup preventing cascade failures
 
 ## Documentation Plan
 
