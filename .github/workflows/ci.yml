@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install orchestration dependencies
+        run: pip install docker
+
+      - name: Build images
+        run: |
+          python -m nas_sim build
+          python -m nas_sim build --test-image
+
+      - name: Run test suite
+        run: python -m nas_sim test --verbose
+
+      - name: Cleanup
+        if: always()
+        run: python -m nas_sim clean --all

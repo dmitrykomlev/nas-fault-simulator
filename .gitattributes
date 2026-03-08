@@ -1,0 +1,11 @@
+# Force LF line endings for files that run inside Linux containers.
+# This prevents Windows core.autocrlf from breaking shell scripts,
+# config files, and Dockerfiles.
+
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.template  text eol=lf
+Dockerfile  text eol=lf
+Dockerfile* text eol=lf
+Makefile    text eol=lf
+.env        text eol=lf

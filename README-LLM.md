@@ -95,16 +95,34 @@ The project is organized with the following structure:
 ```
 /nas-fault-simulator/
 ├── Dockerfile                       # Multi-stage Docker build (builder + runtime)
-├── .env                             # Environment variables for configuration
+├── .gitattributes                   # CRLF handling for cross-platform development
 ├── CLAUDE.md                        # Claude Code assistant instructions
 ├── README-LLM.md                    # This context document
 ├── README-LLM-CONF.md               # Configuration system documentation
-├── run-nas-simulator.sh             # Simple end-user script
-├── /scripts/                       # Build and run scripts
-│   ├── config.sh                    # Central configuration loader
-│   ├── build.sh                     # Multi-stage Docker build
-│   ├── run-fuse.sh                  # Run FUSE driver with SMB services
-│   └── run_tests.sh                 # Run all tests (basic + advanced)
+├── VERSION                          # Version string (0.5.0)
+├── pyproject.toml                   # Python project metadata (anchors project root)
+├── Dockerfile.test                  # Test-runner container
+├── /nas_sim/                       # Python orchestration package
+│   ├── cli.py                       # CLI entry point (build, run, test, stop, clean)
+│   ├── config.py                    # Configuration loader
+│   ├── build.py                     # Docker image build
+│   ├── run.py                       # Run FUSE+Samba container
+│   ├── test.py                      # Two-container test orchestration
+│   ├── containers.py                # Container lifecycle helpers
+│   ├── docker_utils.py              # Docker SDK helpers
+│   ├── port_utils.py                # Free port finder
+│   └── console.py                   # Console output helpers
+├── /tests/                         # pytest tests (run inside test-runner container)
+│   ├── conftest.py                  # Fixtures: smb_mount, raw_storage
+│   ├── smb_helpers.py               # SMB mount/unmount
+│   ├── validation.py                # Statistical validation
+│   ├── test_basic_ops.py            # Basic file/dir operations via SMB
+│   ├── test_large_file.py           # Large file handling
+│   ├── test_corruption.py           # Corruption tests (5 scenarios)
+│   └── test_errors.py               # Error injection tests (7 scenarios)
+├── /.github/workflows/             # CI/CD
+│   ├── ci.yml                       # Build + test on push
+│   └── release.yml                  # Tag-triggered publish to ghcr.io
 ├── /src/fuse-driver/                # FUSE filesystem implementation
 │   ├── README-LLM-FUSE.md           # Detailed FUSE driver documentation  
 │   ├── nas-emu-fuse.conf            # Default FUSE driver configuration
@@ -179,9 +197,9 @@ The project is organized with the following structure:
   - [x] Timing-based faults
   - [x] Operation count faults
 - [x] Config-based fault configuration with section format
-- [ ] Fault injection testing
-  - [ ] Corruption fault tests
-  - [ ] Error injection tests
+- [x] Fault injection testing (Python pytest, two-container model)
+  - [x] Corruption fault tests (5 scenarios)
+  - [x] Error injection tests (7 scenarios)
   - [ ] Delay and timing-based fault tests
   - [ ] Partial operation fault tests
   - [ ] Operation count fault tests
@@ -271,11 +289,12 @@ The project uses Docker for consistent development environments and deployment:
 
 ### Development Workflow with Docker
 
-1. **Local Development**: Edit code on host machine using any editor
-2. **Build Process**: Use `./scripts/build.sh` for multi-stage Docker build
-3. **Running**: Use `./scripts/run-fuse.sh` to run the FUSE driver
-4. **Testing**: Use `./scripts/run_tests.sh` to run functional tests
-5. **End-User**: Use `./run-nas-simulator.sh` for simple operation
+1. **Local Development**: Edit code on host machine using any editor (any OS)
+2. **Build Process**: `python -m nas_sim build` for multi-stage Docker build
+3. **Running**: `python -m nas_sim run --config=CONFIG` to run FUSE+Samba
+4. **Testing**: `python -m nas_sim test` runs two-container pytest suite
+5. **Cleanup**: `python -m nas_sim clean --all` removes all containers/images
+6. **CI/CD**: Push to GitHub triggers build+test; tag with `v*` publishes to ghcr.io
 
 ## Current Implementation Details
 
@@ -335,44 +354,47 @@ The FUSE driver implementation includes:
 
 ### Testing Framework
 
-The testing framework includes:
+**Primary Test System**: Python pytest with two-container model
+- Target container runs FUSE+Samba service
+- Runner container executes pytest tests against target via SMB mount
+- Comprehensive test suites:
+  1. **Basic Operations**: File and directory operations via SMB
+  2. **Large File Handling**: Multi-GB file transfers and integrity verification
+  3. **Corruption Tests**: 5 scenarios with configurable probability and data corruption
+  4. **Error Injection Tests**: 7 scenarios for read/write/create/access/nospace errors
 
-1. **Functional Tests**: Basic filesystem operation tests
-2. **Large File Tests**: Performance and reliability tests with larger files
-3. **Test Helpers**: Common utilities for test setup, assertions, and cleanup
-4. **Test Runner**: Script to run all test suites and report results
+**Historical Reference**: Bash functional tests in src/fuse-driver/tests/functional/ for reference only
 
-## Next Steps
+## Next Steps (TODO Items)
 
-1. Create unit tests for fault injection:
-   - Silent data corruption tests
-   - Timing-based failure tests
-   - Operation-count failure tests
-   - Partial operation tests
-   - Delay tests
-
-2. Enhance fault configuration mechanism:
-   - Add runtime API to configure faults
-   - Allow dynamic fault probability adjustment
-   - Add more complex fault trigger conditions
-   - Create fault profile presets
-
-3. Develop SMB layer:
-   - Integrate Samba server with FUSE
-   - Implement protocol-level fault injection
-   - Configure share permissions
-
-4. Build backend service:
-   - Create RESTful API for configuration
-   - Implement metrics collection
-   - Develop fault scenario management
-
-5. Develop web dashboard:
-   - Create configuration UI
-   - Build monitoring interface
-   - Add visualization of metrics
+- [x] Fault injection testing suite (corruption and error tests complete)
+- [ ] Delay and timing-based fault tests
+- [ ] Partial operation fault tests
+- [ ] Operation count fault tests
+- [ ] Performance monitoring and metrics
+- [ ] Backend service (REST API for configuration and monitoring)
+- [ ] Web dashboard (configuration UI, monitoring interface, metrics visualization)
 
 ## Recent Developments (Major Progress)
+
+### Python Orchestration Migration (2025-Q1) - COMPLETED ✅
+1. **Bash to Python Migration**: Replaced bash shell scripts with `nas_sim/` Python package for all operations (build, run, test, stop, clean)
+2. **Configuration System Simplification**:
+   - Deleted `.env` file (defaults now in Config dataclass)
+   - Optional `.env.local` file for overrides in development
+   - Defaults in code, overridable via environment or file
+3. **Build System Removal**:
+   - Deleted `/scripts/` directory entirely (config.sh, build.sh, run-fuse.sh, run_tests.sh)
+   - All functionality now in Python via Docker SDK
+   - Deleted `run-nas-simulator.sh` (functionality in `python -m nas_sim`)
+4. **Cross-Platform Support**:
+   - Added `.gitattributes` for CRLF handling in Windows development
+   - C config parser hardened for CRLF robustness
+   - `find_project_root()` anchors on pyproject.toml for reliable project detection
+5. **Test Framework**:
+   - Python pytest replaces bash test scripts as primary test system
+   - Two-container model: target (FUSE+Samba) + runner (pytest)
+   - Bash functional tests in src/fuse-driver/tests/functional/ retained as historical reference
 
 ### Docker Architecture Migration (2025-07-03) - COMPLETED ✅
 1. **Pure Docker Approach**: Migrated from docker-compose to pure `docker run` commands for all operations

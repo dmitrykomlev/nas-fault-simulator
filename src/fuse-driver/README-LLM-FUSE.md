@@ -1,3 +1,42 @@
+# NAS Emulator FUSE Driver - Detailed Documentation
+
+> **Note**: This is a private context document to maintain knowledge continuity in AI assistant conversations about the FUSE driver component.
+
+## Overview
+
+The FUSE driver is the core component of the NAS Emulator project. It intercepts filesystem operations and can selectively inject faults to simulate various failure scenarios. This document provides detailed information about its design, implementation, and testing.
+
+### Fault Injection Capabilities
+
+The system now implements a comprehensive fault injection framework with the following capabilities:
+
+1. **Error Injection** - Return error codes for specific operations
+   - Configurable error codes
+   - Probability-based triggering
+   - Selective application to specific operations
+
+2. **Data Corruption** - Silently corrupt data during write operations
+   - Configurable corruption percentage
+   - Byte-level random corruption
+   - Only affects write operations
+
+3. **Operation Delays** - Add latency to operations
+   - Configurable delay duration
+   - Can be applied to any operation type
+
+4. **Partial Operations** - Process only a portion of requested data
+   - Configurable size reduction factor
+   - Applies to read and write operations
+
+5. **Timing-based Faults** - Trigger faults after running for a certain time
+   - Start faults after specified minutes of operation
+   - Can trigger any other fault type
+
+6. **Operation Count Faults** - Trigger faults based on operation count
+   - Trigger after specified number of operations
+   - Trigger after specified number of bytes processed
+   - Can trigger any other fault type
+
 ## Performance Considerations
 
 The FUSE driver has been designed with performance in mind, but there are some inherent limitations to be aware of:
@@ -43,7 +82,7 @@ By default, fault injection is disabled. To enable it:
    
 3. **Restart the FUSE driver**:
    ```bash
-   ./scripts/run-fuse.sh
+   python -m nas_sim run --config=nas-emu-fuse.conf
    ```
 
 ### Configuring Fault Types
@@ -74,18 +113,22 @@ To verify fault injection is working:
 
 2. **Try operations that should be affected**:
    ```bash
-   docker-compose exec fuse-dev touch ${NAS_MOUNT_POINT}/test.txt
+   docker exec nas-sim-target touch /nas-mount/test.txt
    # This should fail with a high probability
+   ```
+   Or use the Python test system:
+   ```bash
+   python -m nas_sim test --filter=fault_injection --verbose
    ```
 
 3. **Check the logs**:
    ```bash
-   docker-compose exec fuse-dev cat ${NAS_LOG_FILE}
+   docker exec nas-sim-target cat /var/log/nas-emu-fuse.log
    ```
-   
+
    You should see messages like:
    ```
-   2025-04-18 15:30:45 [INFO] Error fault active for write: /mnt/nas-mount/test.txt, returning error -5
+   2025-04-18 15:30:45 [INFO] Error fault active for write: /nas-mount/test.txt, returning error -5
    ```
 
 ### Common Fault Scenarios
@@ -128,72 +171,55 @@ To verify fault injection is working:
 When troubleshooting issues with the FUSE driver, these approaches can be helpful:
 
 1. **Increase Log Level**:
-   - Set `--loglevel=3` (DEBUG) for maximum logging
-   - View logs with `docker-compose exec fuse-dev cat ${NAS_LOG_FILE}`
+   - Set `log_level = 3` (DEBUG) in nas-emu-fuse.conf for maximum logging
+   - View logs with `docker exec nas-sim-target cat /var/log/nas-emu-fuse.log`
 
 2. **Run in Foreground with Debug**:
-   - Stop the background FUSE process
-   - Run manually with `./nas-emu-fuse ${NAS_MOUNT_POINT} -f -d`
+   - Stop the background FUSE process: `python -m nas_sim stop`
+   - Run with test suite in verbose mode: `python -m nas_sim test --verbose`
+   - Or manually with `/src/fuse-driver/nas-emu-fuse /nas-mount -f -d`
    - The `-f` option keeps it in foreground
    - The `-d` option enables debug output
 
 3. **Check Mount Status**:
-   - `docker-compose exec fuse-dev mount | grep fuse`
-   - `docker-compose exec fuse-dev findmnt -t fuse`
+   - `docker exec nas-sim-target mount | grep fuse`
+   - `docker exec nas-sim-target findmnt -t fuse`
 
 4. **Verify Processes**:
-   - `docker-compose exec fuse-dev ps aux | grep nas-emu-fuse`
-   - `docker-compose exec fuse-dev lsof | grep ${NAS_MOUNT_POINT}`
+   - `docker exec nas-sim-target ps aux | grep nas-emu-fuse`
+   - `docker exec nas-sim-target lsof | grep /nas-mount`
 
 5. **Examine System Logs**:
-   - `docker-compose exec fuse-dev dmesg | tail`
+   - `docker exec nas-sim-target dmesg | tail`
    - Check for FUSE-related kernel messages
 
 6. **Test Basic Functionality**:
-   - Create a simple file: `docker-compose exec fuse-dev touch ${NAS_MOUNT_POINT}/test.txt`
-   - Verify it appears in storage: `docker-compose exec fuse-dev ls -la ${NAS_STORAGE_PATH}`
+   - Create a simple file: `docker exec nas-sim-target touch /nas-mount/test.txt`
+   - Verify it appears in storage: `docker exec nas-sim-target ls -la /storage`
    
 7. **Verify Fault Injection**:
    - Enable fault injection with a high probability
    - Test operations that should be affected
-   - Check the logs for fault injection messages# NAS Emulator FUSE Driver - Detailed Documentation
+   - Check the logs for fault injection messages
 
-> **Note**: This is a private context document to maintain knowledge continuity in AI assistant conversations about the FUSE driver component.
+## Configuration System Details
 
-## Overview
+### config.c - CRLF Defense-in-Depth
 
-The FUSE driver is the core component of the NAS Emulator project. It intercepts filesystem operations and can selectively inject faults to simulate various failure scenarios. This document provides detailed information about its design, implementation, and testing.
+The configuration system includes a defensive measure against CRLF line ending issues. When reading configuration files with `fgets()`, the code now strips `\r\n` characters after reading each line. This handles both Unix (LF) and Windows (CRLF) line endings transparently, preventing configuration parsing errors if the config file is accidentally created with the wrong line ending format.
 
-### Fault Injection Capabilities
-
-The system now implements a comprehensive fault injection framework with the following capabilities:
-
-1. **Error Injection** - Return error codes for specific operations
-   - Configurable error codes
-   - Probability-based triggering
-   - Selective application to specific operations
-
-2. **Data Corruption** - Silently corrupt data during write operations
-   - Configurable corruption percentage
-   - Byte-level random corruption
-   - Only affects write operations
-
-3. **Operation Delays** - Add latency to operations
-   - Configurable delay duration
-   - Can be applied to any operation type
-
-4. **Partial Operations** - Process only a portion of requested data
-   - Configurable size reduction factor
-   - Applies to read and write operations
-
-5. **Timing-based Faults** - Trigger faults after running for a certain time
-   - Start faults after specified minutes of operation
-   - Can trigger any other fault type
-
-6. **Operation Count Faults** - Trigger faults based on operation count
-   - Trigger after specified number of operations
-   - Trigger after specified number of bytes processed
-   - Can trigger any other fault type
+```c
+// Example: After fgets(), strip both \r and \n
+char line[256];
+if (fgets(line, sizeof(line), config_file)) {
+    // Strip \r\n (handles both CRLF and LF)
+    size_t len = strlen(line);
+    while (len > 0 && (line[len-1] == '\r' || line[len-1] == '\n')) {
+        line[--len] = '\0';
+    }
+    // Process cleaned line...
+}
+```
 
 ## Architecture
 
@@ -222,22 +248,25 @@ This separation allows the normal operations to be tested and stabilized indepen
 │   ├── fs_fault_injector.c # Main entry point and FUSE wrappers
 │   ├── fs_operations.c     # Normal filesystem operations
 │   ├── fs_operations.h     # Interface for filesystem operations
-│   ├── fault_injector.c    # Fault injection logic 
+│   ├── fault_injector.c    # Fault injection logic
 │   ├── fault_injector.h    # Interface for fault injection
-│   ├── config.c            # Configuration system
+│   ├── config.c            # Configuration system (strips CRLF for defense-in-depth)
 │   ├── config.h            # Configuration interface
 │   ├── log.c               # Logging implementation
 │   └── log.h               # Logging interface
 ├── /tests
-│   ├── /functional         # Functional tests
+│   ├── /functional         # Functional tests (historical bash scripts)
 │   │   ├── run_all_tests.sh   # Test runner
 │   │   ├── test_helpers.sh    # Test helper functions
 │   │   ├── test_basic_ops.sh  # Basic operations test
 │   │   └── test_large_file_ops.sh  # Large file tests
-│   └── /unit               # Unit tests (to be implemented)
+│   └── /configs            # Fault injection configuration files for testing
 └── /docker
-    └── Dockerfile.dev      # Development environment
+    ├── entrypoint.sh       # Container entry point
+    └── smb.conf            # Samba configuration
 ```
+
+Note: Docker images (Dockerfile, Dockerfile.test) are at project root, not in /docker subfolder.
 
 ## Key Files
 

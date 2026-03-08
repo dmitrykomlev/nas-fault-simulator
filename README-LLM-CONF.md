@@ -8,11 +8,11 @@ The NAS Emulator project uses a centralized configuration system to eliminate ha
 
 ## Core Configuration Principles
 
-1. **Single Source of Truth**: All configuration parameters are defined in a central `.env` file
-2. **Environment Variable Driven**: Configuration is primarily controlled through environment variables
-3. **Sensible Defaults**: When environment variables are not specified, sensible defaults are used
-4. **Propagation to Components**: Configuration is consistently propagated to all components (shell scripts, C code, Docker)
-5. **Flexibility**: Configuration can be overridden at multiple levels (env vars, command line, config files)
+1. **Python Config Dataclass Driven**: Configuration parameters are defined in `nas_sim/config.py` with sensible defaults
+2. **Sensible Defaults**: All required parameters have built-in defaults; most users need no configuration
+3. **Optional Local Overrides**: Users can create `.env.local` for local-specific overrides (not tracked in git)
+4. **Project Root Anchoring**: Configuration loader finds project root by locating `pyproject.toml` file
+5. **Flexibility**: Configuration can be overridden at multiple levels (defaults -> `.env.local` -> environment variables -> command-line args)
 
 ## Key Configuration Parameters
 
@@ -33,15 +33,16 @@ The configuration system is organized as follows:
 
 ```
 /nas-fault-simulator/
-├── .env                        # Primary configuration file
 ├── .env.local                  # Optional local overrides (not tracked in git)
+├── pyproject.toml              # Project metadata (marks project root)
 ├── Dockerfile                  # Multi-stage build using config
-├── run-nas-simulator.sh        # End-user script
-├── /scripts
-│   ├── config.sh               # Shell configuration loader
-│   ├── build.sh                # Build script using config
-│   ├── run-fuse.sh             # Run script using config
-│   └── run_tests.sh            # Test script using config
+├── nas_sim/                    # Python orchestration package
+│   ├── __main__.py             # CLI entry point (python -m nas_sim)
+│   ├── config.py               # Configuration dataclass and loader
+│   ├── build.py                # Build logic
+│   ├── run.py                  # Run logic
+│   ├── test.py                 # Test orchestration
+│   └── ...                     # Other Python modules
 ├── /src
 │   ├── /fuse-driver
 │   │   ├── nas-emu-fuse.conf   # FUSE driver configuration file
@@ -50,71 +51,85 @@ The configuration system is organized as follows:
 │   │   │   └── config.c        # C configuration implementation
 │   │   └── /tests
 │   │       └── /functional
-│   │           └── test_helpers.sh  # Test helpers using config
-└── /nas-storage                # Local storage directory
+│   │           └── README-LLM-FUNCTIONAL-TESTS.md
+├── /tests                      # pytest test code
+│   └── test_*.py               # Test modules
+└── /nas-storage                # Local storage directory (created at runtime)
 ```
 
 ## Configuration Components
 
-### 1. Environment File (`.env`)
+### 1. Python Configuration Loader (`nas_sim/config.py`)
 
-This is the primary configuration file containing all environment variables:
+This module defines the configuration dataclass with sensible defaults and provides the `Config.load()` method:
 
-```ini
-# NAS Emulator Core Configuration
-NAS_MOUNT_POINT=/mnt/nas-mount
-NAS_STORAGE_PATH=/var/nas-storage
-NAS_LOG_FILE=/var/log/nas-emu.log
-NAS_LOG_LEVEL=2
-NAS_SMB_PORT=1445
-DEV_HOST_STORAGE_PATH=./nas-storage
+```python
+# nas_sim/config.py - Central configuration with defaults
+
+from dataclasses import dataclass
+from pathlib import Path
+import os
+
+@dataclass
+class Config:
+    """NAS Emulator configuration with sensible defaults"""
+    nas_mount_point: str = "/mnt/nas-mount"
+    nas_storage_path: str = "/var/nas-storage"
+    nas_log_file: str = "/var/log/nas-emu.log"
+    nas_log_level: int = 2
+    nas_smb_port: int = 1445
+    dev_host_storage_path: str = "./nas-storage"
+    config_file: str = None
+
+    @staticmethod
+    def find_project_root() -> Path:
+        """Find project root by locating pyproject.toml"""
+        current = Path.cwd()
+        while current != current.parent:
+            if (current / "pyproject.toml").exists():
+                return current
+            current = current.parent
+        raise RuntimeError("Could not find project root (pyproject.toml)")
+
+    @classmethod
+    def load(cls) -> "Config":
+        """Load configuration from defaults, .env.local, and environment"""
+        config = cls()
+        project_root = cls.find_project_root()
+
+        # Load from .env.local if it exists
+        env_local = project_root / ".env.local"
+        if env_local.exists():
+            # Load environment variables from .env.local
+            with open(env_local) as f:
+                for line in f:
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        os.environ[key.strip()] = value.strip()
+
+        # Override with environment variables if present
+        for field in dataclass_fields(config):
+            env_var = field.name.upper()
+            if env_var in os.environ:
+                setattr(config, field.name, os.environ[env_var])
+
+        return config
 ```
 
-### 2. Shell Configuration Loader (`config.sh`)
+The configuration follows this priority order:
+1. Built-in defaults (in Config dataclass fields)
+2. Values from `.env.local` (if it exists)
+3. Environment variables
+4. Command-line arguments (parsed by orchestration scripts)
 
-This script loads configuration from the environment file and makes it available to shell scripts:
+### 2. Optional Local Overrides (`.env.local`)
 
-```bash
-#!/bin/bash
-# config.sh - Central configuration loader for shell scripts
+Users can create `.env.local` in the project root for local-specific overrides. This file is NOT tracked in git:
 
-# Find the project root directory (where .env lives)
-find_project_root() {
-  local dir="$PWD"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/.env" ]]; then
-      echo "$dir"
-      return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-  echo "Error: Could not find project root with .env file" >&2
-  return 1
-}
-
-PROJECT_ROOT="$(find_project_root)"
-if [[ $? -ne 0 ]]; then
-  echo "Failed to locate project root directory" >&2
-  exit 1
-fi
-
-# Load default configuration
-set -a  # Automatically export all variables
-source "$PROJECT_ROOT/.env"
-set +a
-
-# Override with environment variables if present
-if [[ -f "$PROJECT_ROOT/.env.local" ]]; then
-  set -a
-  source "$PROJECT_ROOT/.env.local"
-  set +a
-fi
-
-# Make paths available as shell variables without prefix if needed
-MOUNT_POINT="${NAS_MOUNT_POINT}"
-STORAGE_PATH="${NAS_STORAGE_PATH}"
-LOG_FILE="${NAS_LOG_FILE}"
-LOG_LEVEL="${NAS_LOG_LEVEL}"
+```ini
+# .env.local - Optional local overrides (not tracked in git)
+NAS_SMB_PORT=1446
+NAS_LOG_LEVEL=3
 ```
 
 ### 3. C Configuration Module (`config.h`, `config.c`)
@@ -128,10 +143,10 @@ typedef struct {
     char *storage_path;      // Path to backing storage
     char *log_file;          // Path to log file
     int log_level;           // Log level (0-3)
-    
+
     // Fault injection options (to be expanded later)
     bool enable_fault_injection;  // Master switch for fault injection
-    
+
     // Config file path (if used)
     char *config_file;       // Path to configuration file
 } fs_config_t;
@@ -147,7 +162,7 @@ void config_init(fs_config_t *config) {
     const char *env_storage_path = getenv("NAS_STORAGE_PATH");
     const char *env_log_file = getenv("NAS_LOG_FILE");
     const char *env_log_level = getenv("NAS_LOG_LEVEL");
-    
+
     // Set defaults, overridden by environment variables if available
     config->mount_point = strdup(env_mount_point ? env_mount_point : "/mnt/nas-mount");
     config->storage_path = strdup(env_storage_path ? env_storage_path : "/var/nas-storage");
@@ -160,40 +175,46 @@ void config_init(fs_config_t *config) {
 
 ### 4. Docker Configuration
 
-The pure Docker approach uses environment variables for configuration:
+Configuration is passed to Docker containers via environment variables using the Python Docker SDK:
 
-```bash
-# Pure docker run command with environment variables
-docker run -d \
-    --name "nas-fault-simulator" \
-    --privileged \
-    --cap-add SYS_ADMIN \
-    --device /dev/fuse:/dev/fuse \
-    --security-opt apparmor:unconfined \
-    -p "${SMB_PORT}:445" \
-    -v "${PROJECT_ROOT}/nas-storage:/var/nas-storage" \
-    -v "${PROJECT_ROOT}/src/fuse-driver/tests/configs:/configs:ro" \
-    -e "CONFIG_FILE=${CONFIG_FILE}" \
-    -e "NAS_MOUNT_POINT=/mnt/nas-mount" \
-    -e "NAS_STORAGE_PATH=/var/nas-storage" \
-    -e "NAS_LOG_FILE=/var/log/nas-emu.log" \
-    -e "NAS_LOG_LEVEL=3" \
-    -e "SMB_SHARE_NAME=nasshare" \
-    -e "SMB_USERNAME=nasusr" \
-    -e "SMB_PASSWORD=naspass" \
-    -e "USE_HOST_STORAGE=true" \
-    nas-fault-simulator-fuse-dev
+```python
+# nas_sim/run.py - Docker container execution with config
+import docker
+from nas_sim.config import Config
+
+config = Config.load()
+
+client = docker.from_env()
+container = client.containers.run(
+    "nas-fault-simulator-fuse",
+    detach=True,
+    privileged=True,
+    cap_add=["SYS_ADMIN"],
+    devices={"/dev/fuse": "/dev/fuse"},
+    ports={"445/tcp": config.nas_smb_port},
+    volumes={
+        f"{project_root}/nas-storage": {"bind": "/var/nas-storage", "mode": "rw"},
+    },
+    environment={
+        "NAS_MOUNT_POINT": config.nas_mount_point,
+        "NAS_STORAGE_PATH": config.nas_storage_path,
+        "NAS_LOG_FILE": config.nas_log_file,
+        "NAS_LOG_LEVEL": str(config.nas_log_level),
+    }
+)
 ```
+
+No docker-compose is used. All orchestration is handled by the Python Docker SDK in `nas_sim/` modules.
 
 ## Configuration Flow
 
-1. **Environment Variables** are defined in `.env` and loaded by shell scripts
-2. **Docker Container** receives these variables via `-e` flags in `docker run`
-3. **Shell Scripts** source `config.sh` to obtain configuration values
-4. **C Code** accesses environment variables via `getenv()` calls in `config.c`
-5. **Command-line Arguments** can override environment variables when specified
-6. **Local Environment Overrides** in `.env.local` (if present) take precedence over `.env`
-7. **Dynamic Configuration**: Ports and container names allocated automatically
+1. **Python Config Dataclass** has built-in sensible defaults in `nas_sim/config.py`
+2. **Local Overrides** from `.env.local` (if present) override defaults
+3. **Environment Variables** can override local file values
+4. **Command-line Arguments** override all previous sources when specified
+5. **Docker Container** receives configuration values via `-e` environment flags passed by Python Docker SDK
+6. **C Code** accesses environment variables via `getenv()` calls in `config.c`
+7. **Dynamic Configuration**: Ports and container names allocated automatically by Python orchestration
 
 ## Storage Paths Explained
 
@@ -219,57 +240,69 @@ The data flow follows this path:
 Client → /mnt/nas-mount (FUSE) → FUSE driver → /var/nas-storage (container) → ./nas-storage (host)
 ```
 
-## Script Configuration Usage
+## Python Orchestration Commands
 
-The project provides several scripts that leverage the configuration system:
+The project uses Python modules (invoked via `python -m nas_sim`) to orchestrate all operations:
 
-### build.sh
+### python -m nas_sim build
 Builds the multi-stage Docker image with FUSE driver compiled inside.
+- `--test-image`: Also build the test-runner image
+- `--no-cache`: Force rebuild without Docker layer cache
 
-### run-fuse.sh
-Starts a Docker container with FUSE filesystem, using pure `docker run`. It includes logic to:
+### python -m nas_sim run
+Starts a Docker container with FUSE filesystem. Includes logic to:
 - Auto-build image if missing
 - Stop any existing containers with same name
-- Find free SMB ports automatically
-- Mount only essential directories
+- Allocate free SMB ports automatically
 - Pass configuration parameters via environment variables
+- Options:
+  - `--config=FILE`: Use specified fault injection config file
+  - `--port=PORT`: Use specific SMB port instead of auto-allocation
 
-### run_tests.sh
-Runs the complete test suite (basic + advanced tests), managing container lifecycle.
+### python -m nas_sim test
+Runs the complete test suite using pytest inside a test-runner container.
+- `--filter=PATTERN`: Run only tests matching pattern
+- `--verbose`: Show detailed test output
+- `--preserve`: Keep container after test failure
 
-### run-nas-simulator.sh
-Simple end-user script for running the NAS simulator with default configuration.
+### python -m nas_sim stop
+Stops the running NAS simulator container.
+
+### python -m nas_sim clean
+Cleanup containers, volumes, and networks.
+- `--all`: Remove all traces including images
 
 ## Troubleshooting Configuration Issues
 
 Common configuration issues and solutions:
 
-### 1. Missing Environment Variables
+### 1. Configuration Not Taking Effect
 
 **Symptoms**: Default values being used instead of expected custom values.
 
 **Solution**:
-- Check the `.env` file exists in the project root
-- Ensure all required variables are defined
-- Verify `docker-compose.yml` is loading the env file with `env_file: - .env`
+- Verify `.env.local` file exists in project root (optional, not required)
+- Check environment variables: `echo $NAS_SMB_PORT`
+- Verify project root was found: `python -c "from nas_sim.config import Config; print(Config.find_project_root())"`
+- Check command-line arguments were passed correctly
 
 ### 2. Path Access Issues
 
 **Symptoms**: "Permission denied" or "No such file or directory" errors.
 
 **Solution**:
-- Check that the directories exist: `mkdir -p ${NAS_STORAGE_PATH}`
-- Verify permissions: `chmod -R 755 ${NAS_STORAGE_PATH}`
+- Check that the storage directory exists: `ls -la ./nas-storage`
+- Verify permissions: `chmod -R 755 ./nas-storage`
 - Check the paths are correctly mounted in Docker: `docker exec nas-fault-simulator mount`
 
-### 3. Docker Volume Mounting Problems
+### 3. Container Volume Mounting Problems
 
 **Symptoms**: Container has correct environment variables but volume mounts are wrong.
 
 **Solution**:
-- Use absolute paths instead of relative paths in `.env`
-- Recreate the container: `docker-compose down && docker-compose up -d`
-- Check Docker volume mounts: `docker inspect container_name | grep Mounts -A 10`
+- Check Docker container mounts: `docker inspect CONTAINER_NAME | grep Mounts -A 10`
+- Verify storage path is absolute or properly resolved relative to project root
+- Stop container and rebuild: `python -m nas_sim stop && python -m nas_sim clean`
 
 ### 4. FUSE Mount Issues
 
@@ -277,9 +310,10 @@ Common configuration issues and solutions:
 
 **Solution**:
 - Verify FUSE is running: `docker exec nas-fault-simulator ps aux | grep nas-emu-fuse`
-- Check FUSE logs: `docker exec nas-fault-simulator cat ${NAS_LOG_FILE}`
+- Check FUSE logs: `docker exec nas-fault-simulator cat /var/log/nas-emu.log`
 - Check container logs: `docker logs nas-fault-simulator`
 - Look for error messages: `docker exec nas-fault-simulator dmesg | tail`
+- Verify log level is high enough: `python -m nas_sim run --help` for options
 
 ## Future Enhancements
 
@@ -303,29 +337,39 @@ Common configuration issues and solutions:
 The NAS Emulator exposes the SMB port (445) for network access, but this often conflicts with the system's native SMB service. To avoid conflicts:
 
 1. The default host port is set to 1445 instead of 445
-2. This is configured via the `NAS_SMB_PORT` environment variable
-3. The mapping is defined in `docker-compose.yml` as `"${NAS_SMB_PORT:-1445}:445"`
+2. This is configured via the `NAS_SMB_PORT` configuration parameter (defaults to 1445)
+3. Can be overridden via:
+   - `.env.local` file: `NAS_SMB_PORT=1446`
+   - Environment variable: `export NAS_SMB_PORT=1446`
+   - Command-line argument: `python -m nas_sim run --port=1446`
 
-When connecting to the SMB service, use the host port specified in `NAS_SMB_PORT`.
+When connecting to the SMB service, use the host port specified by `NAS_SMB_PORT`.
 
-## Command-Line Overrides
+## Configuration Priority Order
 
-The FUSE driver accepts command-line arguments to override configuration:
+When multiple configuration sources are available, this priority order applies:
 
+1. **Command-line arguments** (highest) - Arguments passed to Python orchestration commands
+2. **Environment variables** - Set in shell before running Python commands
+3. **`.env.local` file** - Optional file in project root
+4. **Config dataclass defaults** (lowest) - Built-in defaults in `nas_sim/config.py`
+
+Example:
 ```bash
-nas-emu-fuse /mnt/nas-mount \
-  --storage=/var/custom-storage \
-  --log=/var/log/custom.log \
-  --loglevel=3 \
-  --config=/etc/nas-emu/custom.conf
+# Uses default port 1445
+python -m nas_sim run --config=my-config.conf
+
+# Overrides with environment variable
+NAS_SMB_PORT=1446 python -m nas_sim run --config=my-config.conf
+
+# Command-line argument takes precedence (if supported)
+python -m nas_sim run --config=my-config.conf --port=1447
 ```
 
-The priority order is:
-1. Command-line arguments (highest)
-2. Environment variables from `.env.local`
-3. Environment variables from `.env`
-4. Configuration file values
-5. Hardcoded defaults (lowest)
+For the FUSE driver itself (C code), configuration comes from:
+1. Command-line arguments to `nas-emu-fuse` binary
+2. Environment variables passed via Docker
+3. Hardcoded defaults in C code
 
 ## Critical Configuration Parsing Issues
 

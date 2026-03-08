@@ -15,6 +15,17 @@ src/fuse-driver/nas-emu-fuse
 .vscode/
 .idea/
 
+# Python
+__pycache__/
+*.egg-info/
+.venv/
+dist/
+*.pyc
+
+# Environment overrides
+.env
+.env.local
+
 # OS generated files
 .DS_Store
 .DS_Store?

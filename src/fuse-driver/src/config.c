@@ -117,8 +117,14 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
     
     char line[256];
     while (fgets(line, sizeof(line), file)) {
+        // Strip trailing \r\n (handles both Unix LF and Windows CRLF)
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+
         // Skip comments and empty lines
-        if (line[0] == '#' || line[0] == '\n') {
+        if (line[0] == '#' || line[0] == '\0') {
             continue;
         }
         

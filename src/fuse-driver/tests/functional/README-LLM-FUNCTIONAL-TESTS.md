@@ -2,6 +2,8 @@
 
 > **Note**: This is a private context document to maintain knowledge continuity in AI assistant conversations about the functional test suite.
 
+> **IMPORTANT**: These bash functional tests are HISTORICAL REFERENCE only. The primary test system is now Python pytest running in Docker with a two-container model (target container + test-runner container). Run all tests with: `python -m nas_sim test`. The bash scripts in this directory are kept for reference but are NOT actively maintained.
+
 ## Overview
 
 The functional test suite for the NAS Emulator FUSE driver consists of two distinct testing frameworks:
@@ -163,26 +165,28 @@ run_test_with_config "config_name.conf" "test_name" test_function
 
 ## Test Runner Scripts
 
-### `run_all_tests.sh`
-**Current Scope**: Basic framework tests (prerequisite for advanced tests)
-**Config Used**: `no_faults.conf` (clean testing)
-**Tests Included**:
-- Basic operations
-- Large file operations
+### Python Test Runner (CURRENT PRIMARY SYSTEM)
+**Location**: `nas_sim/test.py`
+**Purpose**: Modern unified test runner with 14 test scenarios across corruption and error fault categories
+**Execution**: `python -m nas_sim test`
 
-**Integration with Advanced Tests**:
-- Advanced tests run automatically after basic tests pass
-- Basic test failure skips advanced tests (proper dependency management)
+**Test Scenarios** (14 total):
+- Basic operations (1 scenario)
+- Corruption tests (5 scenarios)
+- Error fault tests (5 scenarios)
+- Additional coverage tests (3 scenarios)
 
-### `scripts/run_tests.sh`
-**Purpose**: Full test suite execution with proper dependency management
-**Capabilities**:
-- Docker container management (starts if needed)
-- FUSE driver build (builds if needed)
-- FUSE mount (mounts if needed)
-- Calls `run_all_tests.sh` for basic tests
-- **NEW**: Runs advanced corruption tests only if basic tests pass
-- **NEW**: Integrated priority-based fault injection testing
+**Features**:
+- Two-container Docker model (target + test-runner)
+- Cross-platform (Windows, macOS, Linux)
+- No host SMB mounts required
+- Automatic cleanup
+- Parallel execution support
+
+### Historical Bash Test Scripts (REFERENCE ONLY - NO LONGER MAINTAINED)
+
+`run_all_tests.sh` and `scripts/run_tests.sh` are kept for historical reference only.
+These have been superseded by the Python test runner.
 
 ## Organized Test-Driven Structure (NEW)
 
@@ -268,63 +272,73 @@ if (check_operation_count_fault(FS_OP_WRITE)) {
 4. **Test Coverage**: Now includes comprehensive error fault testing alongside corruption testing
 
 ### SMB Testing Requirements:
-- **macOS**: Requires `mount_smbfs` command
-- **Linux**: Requires CIFS kernel support and `mount` command
-- **Docker**: SMB service must be running and accessible
-- **Network**: Port 1445 must be accessible for SMB
+- **Host Platform**: Windows, macOS, or Linux all supported
+- **Docker**: Required for container orchestration
+- **Python**: 3.9+ required for nas_sim test runner
+- **SMB Mounting**: Now happens INSIDE test-runner Docker container, not on host
+- **No host SMB mounts required**: Tests work identically on all platforms (Windows, macOS, Linux)
 
 ## Future Improvements
 
-### Test Coverage Gaps
-1. **Error Injection Tests**: Framework exists, need specific test scenarios
-2. **Delay Injection Tests**: Framework exists, need specific test scenarios  
-3. **Partial Operation Tests**: Framework exists, need specific test scenarios
-4. **Timing-based Fault Tests**: Framework exists, need specific test scenarios
-5. **Operation Count Fault Tests**: Framework exists, need specific test scenarios
+### Test Coverage Gaps (Remaining)
+1. **Delay Injection Tests**: Framework exists in fault injection system, test scenarios needed
+2. **Partial Operation Tests**: Framework exists in fault injection system, test scenarios needed
+3. **Timing-based Fault Tests**: Framework exists in fault injection system, test scenarios needed
+4. **Operation Count Fault Tests**: Framework exists in fault injection system, test scenarios needed
 
-**NOTE**: All fault injection types are now implemented in the priority-based system. Test scenarios need to be written to exercise each fault type independently.
+**NOTE**: All fault injection types are implemented in the priority-based system. Additional pytest scenarios can be added to `tests/` directory to exercise each fault type independently.
 
-### Framework Enhancements
-1. **Unified Test Runner**: Combine both frameworks seamlessly
-2. **Parallel Test Execution**: Run tests concurrently where possible
-3. **Test Result Reporting**: JSON/XML output for CI/CD integration
-4. **Performance Benchmarking**: Add timing and throughput metrics
+### Framework Enhancements (COMPLETED)
+- **Unified Test Runner**: Python pytest framework IS the unified test runner (Completed)
+- **Parallel Test Execution**: Supported by pytest architecture
+- **Cross-platform Support**: Windows, macOS, Linux all tested (Completed)
+- **CI/CD Integration**: Python test system ready for automated pipelines (Completed)
 
 ## Command Quick Reference
 
+### Python Test System (CURRENT - RECOMMENDED)
+
 ```bash
-# Run all basic tests (no fault injection)
+# Run all 14 test scenarios
+python -m nas_sim test
+
+# Run corruption tests only
+python -m nas_sim test --filter=corruption
+
+# Run basic operations tests only
+python -m nas_sim test --filter=basic
+
+# Run error injection tests only
+python -m nas_sim test --filter=error
+
+# Run with verbose output
+python -m nas_sim test --verbose
+
+# Keep containers running on failure (for debugging)
+python -m nas_sim test --preserve
+```
+
+### Historical Bash Scripts (REFERENCE ONLY - NO LONGER MAINTAINED)
+
+```bash
+# These commands are kept for reference but are NOT actively maintained
+
+# Run all basic tests (original approach)
 ./scripts/run_tests.sh
 
-# Run basic tests directly in container (after copying scripts)
-docker compose exec fuse-dev mkdir -p /tests
-docker cp src/fuse-driver/tests/functional/*.sh $(docker compose ps -q fuse-dev):/tests/
-docker compose exec fuse-dev bash -c "cd /tests && ./run_all_tests.sh"
-
-# Run corruption tests manually
+# Run specific corruption tests (legacy)
 ./src/fuse-driver/tests/functional/test_corruption_none.sh
 ./src/fuse-driver/tests/functional/test_corruption_medium.sh
 ./src/fuse-driver/tests/functional/test_corruption_high.sh
 ./src/fuse-driver/tests/functional/test_corruption_corner_prob.sh
 ./src/fuse-driver/tests/functional/test_corruption_corner_data.sh
 
-# Run error fault tests manually (NEW)
+# Run specific error fault tests (legacy)
 ./src/fuse-driver/tests/functional/test_error_io_write_medium.sh
 ./src/fuse-driver/tests/functional/test_error_io_read_medium.sh
 ./src/fuse-driver/tests/functional/test_error_io_all_high.sh
 ./src/fuse-driver/tests/functional/test_error_access_create_medium.sh
 ./src/fuse-driver/tests/functional/test_error_nospace_write_high.sh
-
-# Test specific fault types with organized configs
-./scripts/run-fuse.sh --config=corruption_medium.conf
-./scripts/run-fuse.sh --config=error_io_write_medium.conf
-./scripts/run-fuse.sh --config=error_io_all_high.conf
-./scripts/run-fuse.sh --config=error_access_create_medium.conf
-./scripts/run-fuse.sh --config=error_nospace_write_high.conf
-
-# Debug FUSE mount
-docker compose exec fuse-dev mount | grep fuse
-docker compose exec fuse-dev ps aux | grep nas-emu
 ```
 
 ## Recent Major Improvements

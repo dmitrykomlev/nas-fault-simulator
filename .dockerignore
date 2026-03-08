@@ -26,9 +26,14 @@
 **/*.md
 **/README*
 
+# Exclude Python orchestration (not needed in any Docker image)
+nas_sim/
+Dockerfile.test
+pyproject.toml
+VERSION
+__pycache__/
+*.egg-info/
+.venv/
+
 # Include only source code and essential config files
 !src/
-!scripts/
-!docker-compose*.yml
-!.env
-!CLAUDE.md

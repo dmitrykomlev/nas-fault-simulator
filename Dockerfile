@@ -64,8 +64,10 @@ RUN chmod +x /usr/local/bin/nas-emu-fuse
 # Copy SMB configuration template
 COPY src/fuse-driver/docker/smb.conf /etc/samba/smb.conf.template
 
-# Copy test configuration files
-COPY src/fuse-driver/tests/configs/ /configs/
+# /configs/ directory exists (created by mkdir above) but is empty.
+# Users mount their own configs at runtime; test configs are mounted by the
+# orchestrator.  For backwards compatibility the orchestrator bind-mounts
+# src/fuse-driver/tests/configs -> /configs:ro when running tests.
 
 # Copy and setup entrypoint script
 COPY src/fuse-driver/docker/entrypoint.sh /entrypoint.sh
