@@ -3,17 +3,9 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Required Reading
-When starting work on this project, always read these files first to understand the project context:
-- README-LLM.md - Overall project architecture, goals, and current implementation status
-- README-LLM-CONF.md - Configuration system details, environment variables, and known configuration issues
-- src/fuse-driver/README-LLM-FUSE.md - FUSE driver implementation, fault injection capabilities, and debugging
-- src/fuse-driver/tests/functional/README-LLM-FUNCTIONAL-TESTS.md - Test architecture, frameworks, and current test status
-
-## Auto-read Command
-Run this command to quickly read all project documentation:
-```bash
-find . -name "README-LLM*.md" -exec echo "=== {} ===" \; -exec cat {} \;
-```
+When starting work on this project, read these files to understand the project context:
+- README-LLM.md - Project architecture, configuration, test system, known gotchas
+- src/fuse-driver/README-LLM-FUSE.md - FUSE driver internals, fault priority system, config format
 
 ## Build & Test Commands (Python orchestration)
 
@@ -60,5 +52,5 @@ Prerequisites: Python 3.9+, Docker, `pip install docker`
 
 ## Environment
 - Development on any OS with Docker + Python 3.9+
-- Configuration via .env file and config files
+- Config defaults in nas_sim/config.py; optional .env.local for overrides
 - Docker containers handle all FUSE/SMB operations
