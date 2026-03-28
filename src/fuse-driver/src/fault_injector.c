@@ -193,7 +193,8 @@ bool apply_delay_fault(fs_op_type_t operation) {
 }
 
 // Apply a corruption fault if configured
-bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size) {
+bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size,
+                            corruption_detail_t *detail) {
     fs_config_t *config = config_get_global();
     
     LOG_DEBUG("=== CORRUPTION FAULT CHECK for %s ===", fs_op_names[operation]);
@@ -268,14 +269,27 @@ bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size) {
                   (buffer[i] >= 32 && buffer[i] < 127) ? buffer[i] : '.');
     }
     
+    // Initialize detail tracking if provided
+    if (detail) {
+        detail->count = 0;
+    }
+
     // Corrupt random bytes in the buffer
     for (size_t i = 0; i < corrupt_bytes && size > 0; i++) {
         size_t pos = rand() % size;
         char original = buffer[pos];
         char corrupted = (char)(rand() % 256);
         buffer[pos] = corrupted;
-        LOG_DEBUG("Corrupted byte at pos %zu: 0x%02x -> 0x%02x", 
+        LOG_DEBUG("Corrupted byte at pos %zu: 0x%02x -> 0x%02x",
                   pos, (unsigned char)original, (unsigned char)corrupted);
+
+        // Track corruption details for event emission
+        if (detail && detail->count < MAX_CORRUPTION_TRACK) {
+            detail->positions[detail->count] = pos;
+            detail->original[detail->count] = (unsigned char)original;
+            detail->corrupted[detail->count] = (unsigned char)corrupted;
+            detail->count++;
+        }
     }
     
     LOG_INFO("=== CORRUPTION COMPLETE ===");

@@ -13,6 +13,7 @@
 #include "fault_injector.h"
 #include "log.h"
 #include "config.h"
+#include "event_emitter.h"
 
 // Define our own help key that doesn't conflict with FUSE's constants
 #define NAS_OPT_KEY_HELP -100
@@ -147,18 +148,19 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
     // Check timing/count-based faults first
     bool timing_count_fault = should_trigger_fault(FS_OP_READ);
     
-    // Try each fault type in order of precedence
-    
-    // 1. Try error fault (highest precedence - returns error to caller)
+    // 1. Try error fault (highest precedence)
     int error_code = -EIO;
     if (timing_count_fault || apply_error_fault(FS_OP_READ, &error_code)) {
         LOG_INFO("Error fault active for read: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT read: %s (error fault: %d)", path, error_code);
+        event_emit_fault(FS_OP_READ, path, offset, size, "error", error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
-    apply_delay_fault(FS_OP_READ);
+    if (apply_delay_fault(FS_OP_READ)) {
+        event_emit_fault(FS_OP_READ, path, offset, size, "delay", 0);
+    }
     
     // Check read permission if no file handle
     if (fi == NULL) {
@@ -172,9 +174,17 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
     
     // 3. Apply partial operation fault if applicable
     size_t adjusted_size = apply_partial_fault(FS_OP_READ, size);
+    bool had_partial = (adjusted_size != size);
     
     // 4. Perform the actual operation
     int res = fs_op_read(path, buf, adjusted_size, offset, fi);
+    
+    // Emit events
+    if (had_partial) {
+        event_emit_fault(FS_OP_READ, path, offset, size, "partial", res);
+    } else {
+        event_emit_op(FS_OP_READ, path, offset, size, res);
+    }
     
     // Update stats and return
     if (res > 0) {
@@ -184,26 +194,25 @@ static int fs_fault_read(const char *path, char *buf, size_t size, off_t offset,
     return res;
 }
 
-// In fs_fault_injector.c, the fs_fault_write function needs to be updated to properly check permissions
-
 static int fs_fault_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     LOG_DEBUG(">>> ENTER write: %s (size: %zu, offset: %ld)", path, size, offset);
     
     // Check timing/count-based faults first
     bool timing_count_fault = should_trigger_fault(FS_OP_WRITE);
     
-    // Try each fault type in order of precedence
-    
-    // 1. Try error fault (highest precedence - returns error to caller)
+    // 1. Try error fault (highest precedence)
     int error_code = -EIO;
     if (timing_count_fault || apply_error_fault(FS_OP_WRITE, &error_code)) {
         LOG_INFO("Error fault active for write: %s, returning error %d", path, error_code);
         LOG_DEBUG("<<< EXIT write: %s (error fault: %d)", path, error_code);
+        event_emit_fault(FS_OP_WRITE, path, offset, size, "error", error_code);
         return error_code;
     }
     
     // 2. Apply delay fault if applicable
-    apply_delay_fault(FS_OP_WRITE);
+    if (apply_delay_fault(FS_OP_WRITE)) {
+        event_emit_fault(FS_OP_WRITE, path, offset, size, "delay", 0);
+    }
     
     // Check write permission if no file handle
     if (fi == NULL) {
@@ -217,19 +226,19 @@ static int fs_fault_write(const char *path, const char *buf, size_t size, off_t 
     
     // 3. Apply partial operation fault if applicable
     size_t adjusted_size = apply_partial_fault(FS_OP_WRITE, size);
+    bool had_partial = (adjusted_size != size);
     
     // 4. Apply corruption fault if applicable
+    corruption_detail_t corr_detail;
+    corr_detail.count = 0;
     char *corrupted_buf = NULL;
-    // Create a temporary copy to test if corruption should be applied
     char *temp_buf = malloc(adjusted_size);
     if (temp_buf) {
         memcpy(temp_buf, buf, adjusted_size);
-        if (apply_corruption_fault(FS_OP_WRITE, temp_buf, adjusted_size)) {
-            // Corruption was applied to temp_buf, use it as the corrupted buffer
+        if (apply_corruption_fault(FS_OP_WRITE, temp_buf, adjusted_size, &corr_detail)) {
             corrupted_buf = temp_buf;
-            temp_buf = NULL; // Transfer ownership
+            temp_buf = NULL;
         } else {
-            // No corruption applied, free the temp buffer
             free(temp_buf);
         }
     }
@@ -237,6 +246,15 @@ static int fs_fault_write(const char *path, const char *buf, size_t size, off_t 
     // 5. Perform the actual operation
     const char *final_buf = corrupted_buf ? corrupted_buf : buf;
     int res = fs_op_write(path, final_buf, adjusted_size, offset, fi);
+    
+    // Emit events
+    if (corrupted_buf) {
+        event_emit_corruption(FS_OP_WRITE, path, offset, adjusted_size, &corr_detail);
+    } else if (had_partial) {
+        event_emit_fault(FS_OP_WRITE, path, offset, size, "partial", res);
+    } else {
+        event_emit_op(FS_OP_WRITE, path, offset, size, res);
+    }
     
     // Cleanup
     if (corrupted_buf) {
@@ -695,12 +713,16 @@ int main(int argc, char *argv[]) {
     // Initialize fault injector
     fault_injector_init();
     
+    // Initialize event emitter
+    event_emitter_init(config->event_socket_path);
+    
     // Run FUSE main loop
     ret = fuse_main(args.argc, args.argv, &fs_fault_oper, NULL);
     
     // Clean up resources
     fs_ops_cleanup();
     fault_injector_cleanup();
+    event_emitter_cleanup();
     
     // Clean up logging
     log_close();

@@ -70,6 +70,11 @@ typedef struct {
     
     // Config file path (if used)
     char *config_file;       // Path to configuration file
+
+    // Event emission / management settings
+    bool event_emission_enabled;  // Emit events to Unix socket
+    char *event_socket_path;      // Path to event socket
+    bool emit_metadata_ops;       // Emit getattr/readdir/access events
 } fs_config_t;
 
 // Initialize configuration with defaults from environment

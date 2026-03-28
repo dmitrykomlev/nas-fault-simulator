@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>  /* For size_t */
 #include "fs_common.h"
+#include "event_emitter.h"
 
 // Initialize the fault injector
 void fault_injector_init(void);
@@ -23,8 +24,9 @@ bool apply_error_fault(fs_op_type_t operation, int *error_code);
 // Apply a delay fault if configured
 bool apply_delay_fault(fs_op_type_t operation);
 
-// Apply a corruption fault if configured
-bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size);
+// Apply a corruption fault if configured (detail may be NULL if not needed)
+bool apply_corruption_fault(fs_op_type_t operation, char *buffer, size_t size,
+                            corruption_detail_t *detail);
 
 // Get partial size for partial operation faults
 size_t apply_partial_fault(fs_op_type_t operation, size_t original_size);

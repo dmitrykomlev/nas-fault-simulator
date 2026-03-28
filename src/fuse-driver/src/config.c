@@ -88,7 +88,12 @@ void config_init(fs_config_t *config) {
     config->log_level = env_log_level ? atoi(env_log_level) : 2;
     config->enable_fault_injection = false;
     config->config_file = NULL;
-    
+
+    // Event emission defaults
+    config->event_emission_enabled = true;
+    config->event_socket_path = strdup("/var/run/nas-emu/events.sock");
+    config->emit_metadata_ops = false;
+
     // Initialize all fault pointers to NULL (disabled)
     config->error_fault = NULL;
     config->corruption_fault = NULL;
@@ -288,6 +293,17 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
                     config->partial_fault->operations_mask = config_parse_operations_mask(v);
                 }
             }
+            // Process management/event emission configuration
+            else if (strcmp(current_section, "management") == 0) {
+                if (strcmp(k, "event_emission_enabled") == 0) {
+                    config->event_emission_enabled = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
+                } else if (strcmp(k, "event_socket_path") == 0) {
+                    free(config->event_socket_path);
+                    config->event_socket_path = strdup(v);
+                } else if (strcmp(k, "emit_metadata_ops") == 0) {
+                    config->emit_metadata_ops = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
+                }
+            }
         }
     }
     
@@ -316,6 +332,11 @@ void config_cleanup(fs_config_t *config) {
     if (config->config_file) {
         free(config->config_file);
         config->config_file = NULL;
+    }
+
+    if (config->event_socket_path) {
+        free(config->event_socket_path);
+        config->event_socket_path = NULL;
     }
     
     // Free error fault resources
