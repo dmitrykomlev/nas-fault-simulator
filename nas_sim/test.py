@@ -112,6 +112,15 @@ SCENARIOS: List[TestScenario] = [
         "partial_write_prob", "partial_write_prob.conf",
         "tests/test_partial.py -k partial_write_prob", "partial",
     ),
+    # Group 6: operation count fault tests
+    TestScenario(
+        "opcount_every5_write", "opcount_every5_write.conf",
+        "tests/test_opcount.py -k opcount_every5_write", "opcount",
+    ),
+    TestScenario(
+        "opcount_every3_all", "opcount_every3_all.conf",
+        "tests/test_opcount.py -k opcount_every3_all", "opcount",
+    ),
 ]
 
 
