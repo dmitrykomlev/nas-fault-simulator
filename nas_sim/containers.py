@@ -17,6 +17,7 @@ def start_target(
     network_name: str,
     volume_name: str,
     smb_port: Optional[int] = None,
+    event_volume: Optional[str] = None,
 ) -> bool:
     """Start the FUSE+Samba target container. Returns True on success."""
     client = get_client()
@@ -41,6 +42,10 @@ def start_target(
     volumes = {
         volume_name: {"bind": cfg.storage_path, "mode": "rw"},
     }
+
+    # Mount event socket directory if provided
+    if event_volume:
+        volumes[event_volume] = {"bind": "/var/run/nas-emu", "mode": "rw"}
 
     # Mount config files read-only
     volumes[cfg.configs_dir] = {"bind": "/configs", "mode": "ro"}
@@ -92,6 +97,7 @@ def start_test_runner(
     volume_name: str,
     test_config: str,
     pytest_args: str = "",
+    event_volume: Optional[str] = None,
 ) -> int:
     """Start the test-runner container. Returns the exit code."""
     client = get_client()
@@ -111,6 +117,11 @@ def start_test_runner(
     volumes = {
         volume_name: {"bind": cfg.storage_path, "mode": "ro"},
     }
+
+    # Mount event socket directory if provided
+    if event_volume:
+        volumes[event_volume] = {"bind": "/var/run/nas-emu", "mode": "rw"}
+        environment["EVENT_SOCKET_PATH"] = "/var/run/nas-emu/events.sock"
 
     # ENTRYPOINT is ["pytest"], so command is just the args
     cmd = f"-v --tb=short {pytest_args}"

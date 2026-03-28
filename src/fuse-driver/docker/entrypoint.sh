@@ -23,7 +23,7 @@ fi
 envsubst < /etc/samba/smb.conf.template > /etc/samba/smb.conf
 
 # Ensure directories exist
-mkdir -p "$NAS_MOUNT_POINT" "$(dirname "$NAS_LOG_FILE")"
+mkdir -p "$NAS_MOUNT_POINT" "$(dirname "$NAS_LOG_FILE")" /var/run/nas-emu
 
 # Start SMB services in background
 service smbd start

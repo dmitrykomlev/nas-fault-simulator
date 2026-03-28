@@ -126,6 +126,19 @@ SCENARIOS: List[TestScenario] = [
         "timing_1min_write", "timing_1min_write.conf",
         "tests/test_timing.py -k timing_1min_write", "timing",
     ),
+    # Group 8: event emission tests
+    TestScenario(
+        "event_emission_write", "no_faults.conf",
+        "tests/test_event_emission.py -k TestEventEmissionWrite", "event",
+    ),
+    TestScenario(
+        "event_emission_read", "no_faults.conf",
+        "tests/test_event_emission.py -k TestEventEmissionRead", "event",
+    ),
+    TestScenario(
+        "event_emission_corruption", "corruption_high.conf",
+        "tests/test_event_emission.py -k TestEventEmissionCorruption", "event",
+    ),
 ]
 
 
@@ -138,6 +151,7 @@ def _filter_scenarios(pattern: Optional[str]) -> List[TestScenario]:
 def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
     """Run a single test scenario. Returns True on success."""
     vol_name = f"nas-sim-storage-{scenario.name}"
+    evt_vol_name = f"nas-sim-events-{scenario.name}"
     target_name = f"nas-sim-target-{scenario.name}"
     runner_name = f"nas-sim-runner-{scenario.name}"
 
@@ -148,14 +162,17 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
     start = time.time()
 
     try:
-        # Create fresh volume
+        # Create fresh volumes
         remove_volume(vol_name)
+        remove_volume(evt_vol_name)
         ensure_volume(vol_name)
+        ensure_volume(evt_vol_name)
 
         # Start target container
         console.step(1, "Starting target container")
         if not start_target(
-            cfg, scenario.config_file, target_name, NETWORK_NAME, vol_name
+            cfg, scenario.config_file, target_name, NETWORK_NAME, vol_name,
+            event_volume=evt_vol_name,
         ):
             return False
 
@@ -173,6 +190,7 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
         exit_code = start_test_runner(
             cfg, runner_name, NETWORK_NAME, vol_name,
             scenario.config_file, pytest_args,
+            event_volume=evt_vol_name,
         )
 
         elapsed = time.time() - start
@@ -187,6 +205,7 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
         remove_container(runner_name)
         remove_container(target_name)
         remove_volume(vol_name)
+        remove_volume(evt_vol_name)
 
 
 def run_tests(
