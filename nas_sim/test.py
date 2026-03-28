@@ -99,6 +99,19 @@ SCENARIOS: List[TestScenario] = [
         "delay_read_prob", "delay_read_prob.conf",
         "tests/test_delay.py -k delay_read_prob", "delay",
     ),
+    # Group 5: partial operation tests
+    TestScenario(
+        "partial_write_half", "partial_write_half.conf",
+        "tests/test_partial.py -k partial_write_half", "partial",
+    ),
+    TestScenario(
+        "partial_read_half", "partial_read_half.conf",
+        "tests/test_partial.py -k partial_read_half", "partial",
+    ),
+    TestScenario(
+        "partial_write_prob", "partial_write_prob.conf",
+        "tests/test_partial.py -k partial_write_prob", "partial",
+    ),
 ]
 
 
