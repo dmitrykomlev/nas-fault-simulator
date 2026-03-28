@@ -121,6 +121,11 @@ SCENARIOS: List[TestScenario] = [
         "opcount_every3_all", "opcount_every3_all.conf",
         "tests/test_opcount.py -k opcount_every3_all", "opcount",
     ),
+    # Group 7: timing fault tests
+    TestScenario(
+        "timing_1min_write", "timing_1min_write.conf",
+        "tests/test_timing.py -k timing_1min_write", "timing",
+    ),
 ]
 
 
