@@ -86,6 +86,19 @@ SCENARIOS: List[TestScenario] = [
         "error_nospace_write_high", "error_nospace_write_high.conf",
         "tests/test_errors.py -k nospace_write_high", "error",
     ),
+    # Group 4: delay injection tests
+    TestScenario(
+        "delay_write_medium", "delay_write_medium.conf",
+        "tests/test_delay.py -k delay_write_medium", "delay",
+    ),
+    TestScenario(
+        "delay_read_write", "delay_read_write.conf",
+        "tests/test_delay.py -k delay_read_write", "delay",
+    ),
+    TestScenario(
+        "delay_read_prob", "delay_read_prob.conf",
+        "tests/test_delay.py -k delay_read_prob", "delay",
+    ),
 ]
 
 
