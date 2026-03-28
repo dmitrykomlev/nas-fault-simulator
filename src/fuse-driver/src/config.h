@@ -17,7 +17,6 @@ typedef struct {
 typedef struct {
     float probability;        // Probability of corrupting data
     float percentage;         // Percentage of data to corrupt (0-100)
-    bool silent;              // Report success but corrupt data
     uint32_t operations_mask; // Bit mask of operations to affect
 } fault_corruption_t;
 

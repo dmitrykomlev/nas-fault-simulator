@@ -27,8 +27,8 @@ Each operation wrapper checks faults in strict priority order. The first fault t
 3. **Operation Count Faults** - Operation fails after specified operation count or bytes processed. Aborts operation.
 4. **Permission Check** - Always validated (not a fault, built-in check).
 5. **Delay Faults** - Adds latency in milliseconds. Operation continues after delay.
-6. **Partial Faults** - Reduces operation size (e.g., partial read/write). Operation continues with adjusted size.
-7. **Corruption Faults** - Corrupts data silently. Operation succeeds but data is corrupted. Lowest priority, only affects write operations.
+6. **Partial Faults** - Reduces operation size (read/write only). Operation continues with adjusted size.
+7. **Corruption Faults** - Corrupts data silently (write only). Operation succeeds but data is corrupted. Lowest priority.
 
 Example priority flow:
 ```c

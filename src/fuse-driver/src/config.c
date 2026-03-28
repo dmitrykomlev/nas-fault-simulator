@@ -145,7 +145,6 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
                 if (config->corruption_fault) {
                     config->corruption_fault->probability = 0.5;
                     config->corruption_fault->percentage = 10.0;
-                    config->corruption_fault->silent = true;
                     config->corruption_fault->operations_mask = (1 << FS_OP_WRITE);  // Default: write only (safer)
                 }
             } else if (strcmp(current_section, "delay_fault") == 0 && !config->delay_fault) {
@@ -243,8 +242,6 @@ bool config_load_from_file(fs_config_t *config, const char *filename) {
                     config->corruption_fault->probability = atof(v);
                 } else if (strcmp(k, "percentage") == 0) {
                     config->corruption_fault->percentage = atof(v);
-                } else if (strcmp(k, "silent") == 0) {
-                    config->corruption_fault->silent = (strcmp(v, "true") == 0 || strcmp(v, "1") == 0);
                 } else if (strcmp(k, "operations") == 0) {
                     config->corruption_fault->operations_mask = config_parse_operations_mask(v);
                 }
@@ -396,7 +393,6 @@ void config_print(fs_config_t *config) {
             printf("  Corruption Fault:\n");
             printf("    Probability: %.2f\n", config->corruption_fault->probability);
             printf("    Percentage: %.2f%%\n", config->corruption_fault->percentage);
-            printf("    Silent: %s\n", config->corruption_fault->silent ? "true" : "false");
             printf("    Operations: ");
             if (config->corruption_fault->operations_mask == 0xFFFFFFFF) {
                 printf("all");
