@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 When starting work on this project, read these files to understand the project context:
 - README-LLM.md - Project architecture, configuration, test system, known gotchas
 - src/fuse-driver/README-LLM-FUSE.md - FUSE driver internals, fault priority system, event emission, config format
-- .claude/plans/ticklish-snuggling-turing.md - Management layer implementation plan (Phases 1-5, Phase 1 done)
+- .claude/plans/management-layer.md - Management layer implementation plan (Phases 1-5, Phase 1 done)
 
 ## Build & Test Commands (Python orchestration)
 
