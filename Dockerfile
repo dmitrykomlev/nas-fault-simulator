@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     samba \
     smbclient \
     gettext-base \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create working directory

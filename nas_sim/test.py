@@ -29,6 +29,7 @@ class TestScenario:
     config_file: str
     pytest_args: str
     group: str
+    exec_inside: str = ""  # If set, run this script inside target via exec
 
 
 # All test scenarios matching the original run_tests.sh flow
@@ -126,18 +127,14 @@ SCENARIOS: List[TestScenario] = [
         "timing_1min_write", "timing_1min_write.conf",
         "tests/test_timing.py -k timing_1min_write", "timing",
     ),
-    # Group 8: event emission tests
+    # Group 8: event emission tests (run inside target container)
     TestScenario(
-        "event_emission_write", "no_faults.conf",
-        "tests/test_event_emission.py -k TestEventEmissionWrite", "event",
+        "event_emission_nofault", "no_faults.conf", "", "event",
+        exec_inside="src/fuse-driver/tests/test_event_emission.py",
     ),
     TestScenario(
-        "event_emission_read", "no_faults.conf",
-        "tests/test_event_emission.py -k TestEventEmissionRead", "event",
-    ),
-    TestScenario(
-        "event_emission_corruption", "corruption_high.conf",
-        "tests/test_event_emission.py -k TestEventEmissionCorruption", "event",
+        "event_emission_corruption", "corruption_high.conf", "", "event",
+        exec_inside="src/fuse-driver/tests/test_event_emission.py",
     ),
 ]
 
@@ -148,10 +145,91 @@ def _filter_scenarios(pattern: Optional[str]) -> List[TestScenario]:
     return [s for s in SCENARIOS if pattern in s.name or pattern in s.group]
 
 
+def _run_exec_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
+    """Run a test script inside the target container via exec."""
+    vol_name = f"nas-sim-storage-{scenario.name}"
+    target_name = f"nas-sim-target-{scenario.name}"
+
+    console.header(f"Test: {scenario.name}")
+    console.info(f"Config: {scenario.config_file}")
+    console.info(f"Script: {scenario.exec_inside}")
+
+    start = time.time()
+
+    try:
+        remove_volume(vol_name)
+        ensure_volume(vol_name)
+
+        console.step(1, "Starting target container")
+        if not start_target(
+            cfg, scenario.config_file, target_name, NETWORK_NAME, vol_name
+        ):
+            return False
+
+        console.step(2, "Waiting for FUSE readiness")
+        if not wait_for_smb(target_name, cfg, timeout=30):
+            console.error("SMB service did not become ready within 30s")
+            return False
+        console.success("FUSE+SMB ready")
+
+        # Copy test script into container and exec it
+        console.step(3, "Running tests inside container")
+        client = get_client()
+        ctr = client.containers.get(target_name)
+
+        # Read the test script from host
+        import os
+        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                   scenario.exec_inside)
+        with open(script_path, "r") as f:
+            script_content = f.read()
+
+        # Copy script into container via tar archive
+        import tarfile
+        import io
+        tar_stream = io.BytesIO()
+        with tarfile.open(fileobj=tar_stream, mode='w') as tar:
+            data = script_content.encode()
+            info = tarfile.TarInfo(name="test_script.py")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        tar_stream.seek(0)
+        ctr.put_archive("/tmp", tar_stream)
+
+        # Execute the test script via subprocess docker exec
+        # (Docker SDK exec_run/exec_start can hang on some configurations)
+        import subprocess
+        result = subprocess.run(
+            ["docker", "exec", ctr.id, "python3", "-u", "/tmp/test_script.py"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.stdout:
+            for line in result.stdout.splitlines():
+                print(f"  {line}")
+        if result.stderr:
+            for line in result.stderr.splitlines():
+                print(f"  {line}")
+        exit_code = result.returncode
+
+        elapsed = time.time() - start
+        if exit_code == 0:
+            console.success(f"{scenario.name} PASSED ({elapsed:.0f}s)")
+            return True
+        else:
+            console.error(f"{scenario.name} FAILED (exit {exit_code}, {elapsed:.0f}s)")
+            return False
+
+    finally:
+        remove_container(target_name)
+        remove_volume(vol_name)
+
+
 def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
     """Run a single test scenario. Returns True on success."""
+    if scenario.exec_inside:
+        return _run_exec_scenario(cfg, scenario, verbose)
+
     vol_name = f"nas-sim-storage-{scenario.name}"
-    evt_vol_name = f"nas-sim-events-{scenario.name}"
     target_name = f"nas-sim-target-{scenario.name}"
     runner_name = f"nas-sim-runner-{scenario.name}"
 
@@ -162,17 +240,14 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
     start = time.time()
 
     try:
-        # Create fresh volumes
+        # Create fresh volume
         remove_volume(vol_name)
-        remove_volume(evt_vol_name)
         ensure_volume(vol_name)
-        ensure_volume(evt_vol_name)
 
         # Start target container
         console.step(1, "Starting target container")
         if not start_target(
-            cfg, scenario.config_file, target_name, NETWORK_NAME, vol_name,
-            event_volume=evt_vol_name,
+            cfg, scenario.config_file, target_name, NETWORK_NAME, vol_name
         ):
             return False
 
@@ -190,7 +265,6 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
         exit_code = start_test_runner(
             cfg, runner_name, NETWORK_NAME, vol_name,
             scenario.config_file, pytest_args,
-            event_volume=evt_vol_name,
         )
 
         elapsed = time.time() - start
@@ -205,7 +279,6 @@ def _run_scenario(cfg: Config, scenario: TestScenario, verbose: bool) -> bool:
         remove_container(runner_name)
         remove_container(target_name)
         remove_volume(vol_name)
-        remove_volume(evt_vol_name)
 
 
 def run_tests(
